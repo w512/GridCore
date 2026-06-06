@@ -1,0 +1,57 @@
+# GridCore example configuration.
+# Copy to ~/.config/gridcore/config.yaml and adjust paths.
+
+server:
+  listen: 127.0.0.1:8080
+
+gpu:
+  # auto | nvidia:<index> | fake
+  device: nvidia:0
+  # Artificial VRAM cap in MB. Useful to leave room for other apps or to
+  # create memory pressure for testing. null = use device total.
+  vram_limit_mb: null
+  # Safety margin for fragmentation / compute buffers.
+  headroom_mb: 512
+  poll_interval: 500ms
+
+runtimes:
+  llamacpp:
+    binary: /opt/llama.cpp/bin/llama-server
+    port_range: [41000, 41999]
+    load_timeout: 120s
+    default_args: ["--flash-attn", "on"]
+
+models:
+  qwen3-14b:
+    runtime: llamacpp
+    path: ~/models/Qwen3-14B-Q4_K_M.gguf
+    capabilities: [chat]
+    ctx: 8192
+    parallel: 2
+    args: ["--jinja"]
+    aliases: [gpt-4o, default-chat]
+
+  nomic-embed:
+    runtime: llamacpp
+    path: ~/models/nomic-embed-text-v1.5.f16.gguf
+    capabilities: [embedding]
+    ctx: 2048
+    parallel: 4
+    pinned: true
+
+  qwen2.5-vl-7b:
+    runtime: llamacpp
+    path: ~/models/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
+    mmproj: ~/models/mmproj-Qwen2.5-VL-7B-Instruct-f16.gguf
+    capabilities: [chat, vision]
+    ctx: 4096
+    parallel: 1
+
+policy:
+  default_class: interactive
+  classes:
+    interactive: { priority: 100, hot_ttl: 5m }
+    background:  { priority: 30 }
+    batch:       { priority: 10 }
+  interactive_idle_before_background: 2s
+  embedding_chunk_size: 32
