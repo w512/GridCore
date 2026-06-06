@@ -1,0 +1,21 @@
+# binaries
+/bin/
+/dist/
+gridcore
+gridcore.exe
+
+# go
+*.test
+*.out
+coverage.html
+
+# local state / configs
+/config.yaml
+/.gridcore/
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
