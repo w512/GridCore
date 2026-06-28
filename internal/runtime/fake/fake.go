@@ -38,8 +38,52 @@ type Runtime struct {
 	// LoadTimeout bounds Load regardless of fake_load_time.
 	LoadTimeout time.Duration
 	// FailLoad, if set, makes every Load fail after the load delay. Tests use
-	// it to exercise crash/retry paths.
+	// it to exercise crash/retry paths. Read under mu so tests may flip it
+	// while the scheduler is running.
 	FailLoad error
+
+	mu        sync.Mutex
+	instances []*Instance
+}
+
+// SetFailLoad changes FailLoad safely while loads may be in progress.
+func (r *Runtime) SetFailLoad(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.FailLoad = err
+}
+
+func (r *Runtime) failLoad() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.FailLoad
+}
+
+// Instances returns every instance ever loaded, oldest first. Tests use it
+// to reach a running instance (e.g. to Kill it).
+func (r *Runtime) Instances() []*Instance {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]*Instance(nil), r.instances...)
+}
+
+// Instance returns the most recent live instance of model id, or nil.
+func (r *Runtime) Instance(id string) *Instance {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := len(r.instances) - 1; i >= 0; i-- {
+		inst := r.instances[i]
+		if inst.spec.ID != id {
+			continue
+		}
+		select {
+		case <-inst.done:
+			continue
+		default:
+			return inst
+		}
+	}
+	return nil
 }
 
 // New creates a fake runtime that reports VRAM into gpu.
@@ -63,8 +107,8 @@ func (r *Runtime) Load(ctx context.Context, spec *model.Spec, port int) (runtime
 		}
 		return nil, ctx.Err()
 	}
-	if r.FailLoad != nil {
-		return nil, r.FailLoad
+	if err := r.failLoad(); err != nil {
+		return nil, err
 	}
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
@@ -92,6 +136,9 @@ func (r *Runtime) Load(ctx context.Context, spec *model.Spec, port int) (runtime
 	if r.gpu != nil {
 		r.gpu.Attach(inst.pid, spec.FakeVRAMMB)
 	}
+	r.mu.Lock()
+	r.instances = append(r.instances, inst)
+	r.mu.Unlock()
 	return inst, nil
 }
 

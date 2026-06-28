@@ -53,6 +53,9 @@ type Entry struct {
 	// VRAMMB is the reservation while loading and the measured (or estimated)
 	// footprint afterwards. Always > 0 once admitted.
 	VRAMMB int
+	// Measured is true once VRAMMB comes from a GPU snapshot rather than an
+	// estimate or a stored profile.
+	Measured bool
 
 	Slots   int // == Spec.Parallel
 	Running int // steps currently dispatched to this instance

@@ -271,6 +271,9 @@ func (c *Config) Validate() error {
 		if m.Path == "" && rt.Type != RuntimeFake {
 			add("models.%s.path is required", id)
 		}
+		if ok && rt.Type == RuntimeFake && m.FakeVRAMMB <= 0 {
+			add("models.%s.fake_vram_mb must be > 0 for fake runtimes", id)
+		}
 		if len(m.Capabilities) == 0 {
 			add("models.%s.capabilities must not be empty", id)
 		}

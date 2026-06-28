@@ -18,8 +18,8 @@ func newTestServer(t *testing.T) *httptest.Server {
 runtimes:
   sim: {type: fake}
 models:
-  chat: {runtime: sim, capabilities: [chat], aliases: [gpt-4o]}
-  embed: {runtime: sim, capabilities: [embedding]}
+  chat: {runtime: sim, capabilities: [chat], aliases: [gpt-4o], fake_vram_mb: 9000}
+  embed: {runtime: sim, capabilities: [embedding], fake_vram_mb: 600}
 `))
 	if err != nil {
 		t.Fatal(err)
