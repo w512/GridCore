@@ -1,8 +1,8 @@
 # binaries
 /bin/
 /dist/
-gridcore
-gridcore.exe
+/gridcore
+/gridcore.exe
 
 # go
 *.test
