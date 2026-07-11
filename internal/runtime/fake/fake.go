@@ -42,8 +42,24 @@ type Runtime struct {
 	// while the scheduler is running.
 	FailLoad error
 
-	mu        sync.Mutex
-	instances []*Instance
+	mu            sync.Mutex
+	instances     []*Instance
+	requestStatus int
+}
+
+// SetRequestStatus makes every inference request on every instance answer
+// with the given HTTP status and an OpenAI-shaped error body (0 restores
+// normal behaviour). Tests use it to exercise upstream-error paths.
+func (r *Runtime) SetRequestStatus(status int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.requestStatus = status
+}
+
+func (r *Runtime) failStatus() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.requestStatus
 }
 
 // SetFailLoad changes FailLoad safely while loads may be in progress.
@@ -124,6 +140,7 @@ func (r *Runtime) Load(ctx context.Context, spec *model.Spec, port int) (runtime
 		done:    make(chan struct{}),
 		delay:   r.RequestDelay,
 		gpu:     r.gpu,
+		rt:      r,
 	}
 	inst.srv = &http.Server{Handler: inst.handler()}
 	go func() {
@@ -150,6 +167,7 @@ type Instance struct {
 	started time.Time
 	delay   time.Duration
 	gpu     *gpufake.Monitor
+	rt      *Runtime
 	srv     *http.Server
 
 	inflight atomic.Int32
@@ -281,8 +299,27 @@ func (i *Instance) track() func() {
 	return func() { i.inflight.Add(-1) }
 }
 
+// injectedError answers with the runtime's configured failure status.
+func (i *Instance) injectedError(w http.ResponseWriter) bool {
+	if i.rt == nil {
+		return false
+	}
+	status := i.rt.failStatus()
+	if status == 0 {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+		"message": fmt.Sprintf("injected failure %d", status), "type": "server_error", "code": "injected"}})
+	return true
+}
+
 func (i *Instance) chat(w http.ResponseWriter, r *http.Request) {
 	defer i.track()()
+	if i.injectedError(w) {
+		return
+	}
 	var req struct {
 		Model  string `json:"model"`
 		Stream bool   `json:"stream"`
@@ -334,6 +371,9 @@ func (i *Instance) chat(w http.ResponseWriter, r *http.Request) {
 
 func (i *Instance) embeddings(w http.ResponseWriter, r *http.Request) {
 	defer i.track()()
+	if i.injectedError(w) {
+		return
+	}
 	var req struct {
 		Input json.RawMessage `json:"input"`
 	}

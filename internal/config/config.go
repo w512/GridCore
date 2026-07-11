@@ -65,6 +65,8 @@ type GPU struct {
 	// compute buffers not attributed to a process.
 	HeadroomMB   int           `yaml:"headroom_mb"`
 	PollInterval time.Duration `yaml:"poll_interval"`
+	// FakeTotalMB is the capacity of the fake device (device: fake).
+	FakeTotalMB int `yaml:"fake_total_mb"`
 }
 
 type Runtime struct {
@@ -74,6 +76,8 @@ type Runtime struct {
 	PortRange   [2]int        `yaml:"port_range"`
 	LoadTimeout time.Duration `yaml:"load_timeout"`
 	DefaultArgs []string      `yaml:"default_args"`
+	// FakeRequestDelay is how long a fake instance takes per request.
+	FakeRequestDelay time.Duration `yaml:"fake_request_delay"`
 }
 
 type Model struct {
@@ -154,6 +158,9 @@ func (c *Config) applyDefaults() {
 	if c.GPU.PollInterval == 0 {
 		c.GPU.PollInterval = 500 * time.Millisecond
 	}
+	if c.GPU.FakeTotalMB == 0 {
+		c.GPU.FakeTotalMB = 16384
+	}
 
 	if c.Runtimes == nil {
 		c.Runtimes = map[string]Runtime{}
@@ -167,6 +174,9 @@ func (c *Config) applyDefaults() {
 		}
 		if rt.LoadTimeout == 0 {
 			rt.LoadTimeout = 120 * time.Second
+		}
+		if rt.Type == RuntimeFake && rt.FakeRequestDelay == 0 {
+			rt.FakeRequestDelay = 50 * time.Millisecond
 		}
 		c.Runtimes[name] = rt
 	}
