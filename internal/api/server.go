@@ -4,87 +4,54 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
-	"time"
 
 	"github.com/gridcore/gridcore/internal/config"
+	"github.com/gridcore/gridcore/internal/job"
 	"github.com/gridcore/gridcore/internal/metrics"
+	"github.com/gridcore/gridcore/internal/scheduler"
 )
 
-// State is the JSON document served at /admin/state. The scheduler fills it;
-// the API only serialises it.
-type State struct {
-	Now      time.Time       `json:"now"`
-	GPU      GPUState        `json:"gpu"`
-	Resident []ResidentModel `json:"resident"`
-	Running  []JobState      `json:"running"`
-	Queued   []JobState      `json:"queued"`
-	Events   []Event         `json:"recent_events"`
+// Scheduler is what the API needs from the control plane.
+type Scheduler interface {
+	Submit(j *job.Job) (*scheduler.Handle, error)
+	State() scheduler.State
+	LoadModel(id string) error
+	UnloadModel(id string) error
+	EnableModel(id string) error
 }
 
-type GPUState struct {
-	Name       string `json:"name"`
-	TotalMB    int    `json:"total_mb"`
-	BudgetMB   int    `json:"budget_mb"` // total or configured limit, minus headroom
-	UsedMB     int    `json:"used_mb"`
-	ReservedMB int    `json:"reserved_mb"`
-	UtilPct    int    `json:"util_pct"`
-	Mode       string `json:"mode"` // interactive | background | idle
-}
-
-type ResidentModel struct {
-	ID          string    `json:"id"`
-	Tier        string    `json:"tier"` // pinned | hot | cold
-	VRAMMB      int       `json:"vram_mb"`
-	Slots       int       `json:"slots"`
-	BusySlots   int       `json:"busy_slots"`
-	LastUsed    time.Time `json:"last_used"`
-	LoadedAt    time.Time `json:"loaded_at"`
-	PID         int       `json:"pid"`
-	Addr        string    `json:"addr"`
-	State       string    `json:"state"` // loading | ready | draining
-	LoadedInSec float64   `json:"loaded_in_sec"`
-}
-
-type JobState struct {
-	ID       string        `json:"id"`
-	Class    string        `json:"class"`
-	Kind     string        `json:"kind"`
-	Model    string        `json:"model"`
-	State    string        `json:"state"`
-	Waited   time.Duration `json:"waited_ms"`
-	Step     int           `json:"step"`
-	Steps    int           `json:"steps"`
-	Enqueued time.Time     `json:"enqueued"`
-}
-
-type Event struct {
-	At      time.Time `json:"at"`
-	Kind    string    `json:"kind"` // enqueue|dispatch|complete|load|evict|crash|timeout|cancel
-	Subject string    `json:"subject"`
-	Detail  string    `json:"detail,omitempty"`
-}
-
-// StateProvider is implemented by the scheduler.
-type StateProvider interface {
-	State() State
-}
-
-// Server wires handlers. Inference endpoints are attached by the proxy in
-// M1; until then they answer 501 so clients get a clear signal.
+// Server wires handlers.
 type Server struct {
 	cfg     *config.Config
 	metrics *metrics.Metrics
-	state   StateProvider
+	sched   Scheduler
 	version string
 	mux     *http.ServeMux
+	proxy   *proxy
+
+	// MaxBodyBytes bounds request bodies (vision requests carry base64
+	// images). Default 32 MB.
+	MaxBodyBytes int64
 }
 
-// New builds the handler tree.
-func New(cfg *config.Config, m *metrics.Metrics, sp StateProvider, version string) *Server {
-	s := &Server{cfg: cfg, metrics: m, state: sp, version: version, mux: http.NewServeMux()}
+// New builds the handler tree. sched may be nil for a control-plane-less
+// server (inference endpoints then answer 503).
+func New(cfg *config.Config, m *metrics.Metrics, sched Scheduler, version string) *Server {
+	s := &Server{
+		cfg:          cfg,
+		metrics:      m,
+		sched:        sched,
+		version:      version,
+		mux:          http.NewServeMux(),
+		proxy:        newProxy(),
+		MaxBodyBytes: 32 << 20,
+	}
 	s.routes()
 	return s
 }
@@ -93,11 +60,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.health)
 	s.mux.Handle("GET /metrics", s.metrics.Handler())
 	s.mux.HandleFunc("GET /admin/state", s.adminState)
+	s.mux.HandleFunc("POST /admin/models/{id}/load", s.adminModel("load"))
+	s.mux.HandleFunc("POST /admin/models/{id}/unload", s.adminModel("unload"))
+	s.mux.HandleFunc("POST /admin/models/{id}/enable", s.adminModel("enable"))
 	s.mux.HandleFunc("GET /v1/models", s.listModels)
-
-	for _, p := range []string{"/v1/chat/completions", "/v1/completions", "/v1/embeddings"} {
-		s.mux.HandleFunc("POST "+p, s.notImplemented)
-	}
+	s.mux.HandleFunc("POST /v1/chat/completions", s.inference(job.Chat))
+	s.mux.HandleFunc("POST /v1/completions", s.inference(job.Completion))
+	s.mux.HandleFunc("POST /v1/embeddings", s.inference(job.Embedding))
 }
 
 // Handler returns the root handler with common response headers applied.
@@ -113,25 +82,58 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) adminState(w http.ResponseWriter, _ *http.Request) {
-	if s.state == nil {
-		writeJSON(w, http.StatusOK, State{Now: time.Now()})
+	if s.sched == nil {
+		writeJSON(w, http.StatusOK, scheduler.State{Mode: "no scheduler"})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.state.State())
+	writeJSON(w, http.StatusOK, s.sched.State())
+}
+
+func (s *Server) adminModel(op string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.sched == nil {
+			WriteError(w, http.StatusServiceUnavailable, "server_error", "no_scheduler", "scheduler not running")
+			return
+		}
+		id := r.PathValue("id")
+		if _, ok := s.cfg.Models[id]; !ok {
+			WriteError(w, http.StatusNotFound, "invalid_request_error", "model_not_found", "unknown model "+id)
+			return
+		}
+		var err error
+		switch op {
+		case "load":
+			err = s.sched.LoadModel(id)
+		case "unload":
+			err = s.sched.UnloadModel(id)
+		case "enable":
+			err = s.sched.EnableModel(id)
+		}
+		if err != nil {
+			status := http.StatusConflict
+			if errors.Is(err, scheduler.ErrShuttingDown) {
+				status = http.StatusServiceUnavailable
+			}
+			WriteError(w, status, "server_error", "admin_"+op+"_failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "model": id, "op": op})
+	}
 }
 
 // listModels answers GET /v1/models in OpenAI shape, including aliases as
 // separate entries so `client.models.list()` shows every name that works.
 func (s *Server) listModels(w http.ResponseWriter, _ *http.Request) {
 	type entry struct {
-		ID      string `json:"id"`
-		Object  string `json:"object"`
-		OwnedBy string `json:"owned_by"`
-		Root    string `json:"root,omitempty"`
+		ID           string   `json:"id"`
+		Object       string   `json:"object"`
+		OwnedBy      string   `json:"owned_by"`
+		Root         string   `json:"root,omitempty"`
+		Capabilities []string `json:"capabilities,omitempty"`
 	}
 	var data []entry
 	for id, m := range s.cfg.Models {
-		data = append(data, entry{ID: id, Object: "model", OwnedBy: "gridcore"})
+		data = append(data, entry{ID: id, Object: "model", OwnedBy: "gridcore", Capabilities: m.Capabilities})
 		for _, a := range m.Aliases {
 			data = append(data, entry{ID: a, Object: "model", OwnedBy: "gridcore", Root: id})
 		}
@@ -140,16 +142,15 @@ func (s *Server) listModels(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
 }
 
-func (s *Server) notImplemented(w http.ResponseWriter, r *http.Request) {
-	WriteError(w, http.StatusNotImplemented, "not_implemented", "not_implemented",
-		"GridCore: "+r.URL.Path+" is not wired to the scheduler yet (milestone M1)")
-}
-
 // WriteError emits an OpenAI-shaped error body.
 func WriteError(w http.ResponseWriter, status int, typ, code, msg string) {
-	writeJSON(w, status, map[string]any{
+	writeJSON(w, status, errorBody(typ, code, msg))
+}
+
+func errorBody(typ, code, msg string) map[string]any {
+	return map[string]any{
 		"error": map[string]any{"message": msg, "type": typ, "code": code, "param": nil},
-	})
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -158,4 +159,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(v)
+}
+
+func newJobID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
