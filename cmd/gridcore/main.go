@@ -2,7 +2,7 @@
 //
 //	gridcore serve   [--config PATH] [--state-dir DIR]   run the daemon
 //	gridcore check   [--config PATH]                     validate config and files
-//	gridcore status  [--addr HOST:PORT]                  show scheduler state
+//	gridcore status  [--addr HOST:PORT] [--watch]        show scheduler state
 //	gridcore models  [--config PATH]                     list configured models
 //	gridcore version
 package main
@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -26,6 +27,8 @@ import (
 	"github.com/gridcore/gridcore/internal/api"
 	"github.com/gridcore/gridcore/internal/config"
 	"github.com/gridcore/gridcore/internal/metrics"
+	"github.com/gridcore/gridcore/internal/model"
+	"github.com/gridcore/gridcore/internal/scheduler"
 )
 
 // version is set by the linker (see Makefile).
@@ -65,9 +68,9 @@ func usage() {
 	fmt.Fprint(os.Stderr, `gridcore — a workload scheduler for local AI computers
 
 Usage:
-  gridcore serve   [--config PATH] [--state-dir DIR]
+  gridcore serve   [--config PATH] [--state-dir DIR] [--log-level LEVEL]
   gridcore check   [--config PATH]
-  gridcore status  [--addr HOST:PORT]
+  gridcore status  [--addr HOST:PORT] [--watch] [--json]
   gridcore models  [--config PATH]
   gridcore version
 
@@ -110,14 +113,24 @@ func cmdServe(args []string) error {
 	if err := cfg.CheckFiles(); err != nil {
 		return fmt.Errorf("config files: %w", err)
 	}
-	if err := os.MkdirAll(cfg.StateDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(cfg.StateDir, "logs"), 0o755); err != nil {
 		return fmt.Errorf("state dir: %w", err)
 	}
 
 	m := metrics.New()
-	// TODO(M1): construct gpu monitor, runtimes, scheduler; pass scheduler as
-	// StateProvider and wire inference endpoints through the proxy.
-	srv := api.New(cfg, m, nil, version)
+	store, err := model.OpenStore(filepath.Join(cfg.StateDir, "profiles.json"))
+	if err != nil {
+		return fmt.Errorf("profiles: %w", err)
+	}
+	mon, runtimes, err := buildBackends(cfg)
+	if err != nil {
+		return err
+	}
+	sched, err := scheduler.New(cfg, runtimes, mon, store, m, scheduler.Options{})
+	if err != nil {
+		return err
+	}
+	srv := api.New(cfg, m, sched, version)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Server.Listen,
@@ -129,6 +142,12 @@ func cmdServe(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	schedDone := make(chan struct{})
+	go func() {
+		_ = sched.Run(ctx)
+		close(schedDone)
+	}()
+
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("gridcore listening", "addr", cfg.Server.Listen, "models", len(cfg.Models), "gpu", cfg.GPU.Device, "state_dir", cfg.StateDir)
@@ -139,12 +158,20 @@ func cmdServe(args []string) error {
 
 	select {
 	case err := <-errCh:
+		stop()
+		<-schedDone
 		return err
 	case <-ctx.Done():
 	}
 	slog.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
+	// Scheduler first: it drains in-flight steps and stops instances while
+	// the HTTP server keeps those responses open.
+	select {
+	case <-schedDone:
+	case <-shutdownCtx.Done():
+	}
 	return httpSrv.Shutdown(shutdownCtx)
 }
 
@@ -162,6 +189,10 @@ func cmdCheck(args []string) error {
 		return fmt.Errorf("files:\n%w", err)
 	}
 	fmt.Println("files:  ok")
+	if _, _, err := buildBackends(cfg); err != nil {
+		return fmt.Errorf("backends: %w", err)
+	}
+	fmt.Println("gpu:    ok")
 	return nil
 }
 
@@ -200,77 +231,107 @@ func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	addr := fs.String("addr", "127.0.0.1:8080", "gridcore address")
 	asJSON := fs.Bool("json", false, "print raw JSON")
+	watch := fs.Bool("watch", false, "refresh every second")
+	interval := fs.Duration("interval", time.Second, "refresh interval with --watch")
 	_ = fs.Parse(args)
 
-	resp, err := http.Get("http://" + *addr + "/admin/state")
-	if err != nil {
-		return err
+	for {
+		st, raw, err := fetchState(*addr)
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			os.Stdout.Write(raw)
+			if !*watch {
+				return nil
+			}
+		} else {
+			if *watch {
+				fmt.Print("\033[H\033[2J") // clear screen
+			}
+			printState(st)
+			if !*watch {
+				return nil
+			}
+		}
+		time.Sleep(*interval)
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if *asJSON {
-		os.Stdout.Write(body)
-		return nil
-	}
-	var st api.State
-	if err := json.Unmarshal(body, &st); err != nil {
-		return err
-	}
-	printState(st)
-	return nil
 }
 
-// printState renders the terminal dashboard. Until the
-// scheduler exists most sections will be empty.
-func printState(st api.State) {
+func fetchState(addr string) (scheduler.State, []byte, error) {
+	resp, err := http.Get("http://" + addr + "/admin/state")
+	if err != nil {
+		return scheduler.State{}, nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return scheduler.State{}, nil, err
+	}
+	var st scheduler.State
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return scheduler.State{}, nil, err
+	}
+	return st, raw, nil
+}
+
+// printState renders the terminal dashboard.
+func printState(st scheduler.State) {
 	g := st.GPU
+	fmt.Printf("%s  mode=%s\n", st.Now.Local().Format("15:04:05"), st.Mode)
 	if g.TotalMB > 0 {
-		fmt.Printf("GPU %-28s %s %5.1f / %.1f GB  util %d%%  mode=%s\n",
-			g.Name, bar(g.UsedMB, g.TotalMB, 20), float64(g.UsedMB)/1024, float64(g.TotalMB)/1024, g.UtilPct, g.Mode)
+		fmt.Printf("GPU %-26s %s %5.1f / %.1f GB  committed %.1f  util %d%%\n",
+			g.Name, bar(g.CommittedMB, g.BudgetMB, 20), float64(g.UsedMB)/1024, float64(g.TotalMB)/1024,
+			float64(g.CommittedMB)/1024, g.UtilPct)
+		if g.ExternalMB > 0 {
+			fmt.Printf("    external (not managed): %.1f GB\n", float64(g.ExternalMB)/1024)
+		}
 	} else {
-		fmt.Println("GPU  (no data)")
+		fmt.Println("GPU  (no snapshot yet)")
 	}
 	fmt.Println()
 	fmt.Println("RUNNING")
 	for _, j := range st.Running {
-		fmt.Printf("  %-10s %-16s %-12s step %d/%d\n", j.Class, j.Model, j.Kind, j.Step, j.Steps)
+		fmt.Printf("  %-11s %-16s %-10s steps %d/%d  queued %dms\n", j.Class, j.Model, j.Kind, j.Completed, j.Steps, j.WaitedMS)
 	}
 	fmt.Println("QUEUED")
 	for _, j := range st.Queued {
-		fmt.Printf("  %-10s %-16s %-12s waited %s\n", j.Class, j.Model, j.Kind, j.Waited.Round(time.Millisecond))
+		fmt.Printf("  %-11s %-16s %-10s waiting %dms  %s\n", j.Class, j.Model, j.Kind, j.WaitedMS, j.Reason)
 	}
 	fmt.Println("RESIDENT")
 	for _, r := range st.Resident {
-		fmt.Printf("  %-16s %-6s %6.1f GB  slots %d/%d  %s\n", r.ID, r.Tier, float64(r.VRAMMB)/1024, r.BusySlots, r.Slots, r.State)
+		meas := "~"
+		if r.Measured {
+			meas = " "
+		}
+		fmt.Printf("  %-16s %-8s %-6s %s%5.1f GB  slots %d/%d\n", r.ID, r.State, r.Tier, meas, float64(r.VRAMMB)/1024, r.BusySlots, r.Slots)
 	}
-	if len(st.Events) > 0 {
+	if len(st.Disabled) > 0 {
+		fmt.Printf("DISABLED  %s\n", strings.Join(st.Disabled, ", "))
+	}
+	if n := len(st.Events); n > 0 {
 		fmt.Println("EVENTS")
+		if n > 15 {
+			st.Events = st.Events[n-15:]
+		}
 		for _, e := range st.Events {
-			fmt.Printf("  %s %-9s %-16s %s\n", e.At.Format("15:04:05"), e.Kind, e.Subject, e.Detail)
+			fmt.Printf("  %s %-9s %-16s %s\n", e.At.Local().Format("15:04:05.000"), e.Kind, e.Subject, e.Detail)
 		}
 	}
 }
 
 func bar(used, total, width int) string {
 	if total <= 0 {
-		return ""
+		return strings.Repeat(".", width)
 	}
 	filled := used * width / total
 	if filled > width {
 		filled = width
 	}
-	b := make([]byte, 0, width)
-	for i := 0; i < width; i++ {
-		if i < filled {
-			b = append(b, '#')
-		} else {
-			b = append(b, '.')
-		}
+	if filled < 0 {
+		filled = 0
 	}
-	return "[" + string(b) + "]"
+	return "[" + strings.Repeat("#", filled) + strings.Repeat(".", width-filled) + "]"
 }
 
 func setupLogging(level string) {
