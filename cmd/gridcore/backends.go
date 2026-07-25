@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -12,10 +14,13 @@ import (
 	"github.com/gridcore/gridcore/internal/gpu/nvidia"
 	"github.com/gridcore/gridcore/internal/runtime"
 	rtfake "github.com/gridcore/gridcore/internal/runtime/fake"
+	"github.com/gridcore/gridcore/internal/runtime/llamacpp"
 )
 
 // buildBackends constructs the GPU monitor and runtime adapters from config.
-func buildBackends(cfg *config.Config) (gpu.Monitor, map[string]runtime.Runtime, error) {
+// When stateDir is non-empty, llama.cpp children are logged there and
+// recorded for orphan cleanup on the next start.
+func buildBackends(cfg *config.Config, stateDir string) (gpu.Monitor, map[string]runtime.Runtime, error) {
 	var mon gpu.Monitor
 	var fakeMon *gpufake.Monitor
 
@@ -50,7 +55,24 @@ func buildBackends(cfg *config.Config) (gpu.Monitor, map[string]runtime.Runtime,
 			rt.LoadTimeout = rc.LoadTimeout
 			runtimes[name] = rt
 		case config.RuntimeLlamaCpp:
-			return nil, nil, fmt.Errorf("runtimes.%s: llamacpp adapter is not implemented yet (milestone M2)", name)
+			var logDir string
+			if stateDir != "" {
+				logDir = filepath.Join(stateDir, "logs")
+			}
+			rt := llamacpp.New(name, rc, logDir)
+			if stateDir != "" {
+				reg, err := llamacpp.OpenRegistry(filepath.Join(stateDir, "instances-"+name+".json"))
+				if err != nil {
+					return nil, nil, err
+				}
+				if reaped := reg.ReapOrphans(); len(reaped) > 0 {
+					for _, e := range reaped {
+						slog.Warn("killed orphaned instance from previous run", "runtime", name, "model", e.Model, "pid", e.PID, "port", e.Port)
+					}
+				}
+				rt.Registry = reg
+			}
+			runtimes[name] = rt
 		default:
 			return nil, nil, fmt.Errorf("runtimes.%s: unknown type %q", name, rc.Type)
 		}

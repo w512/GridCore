@@ -122,7 +122,7 @@ func cmdServe(args []string) error {
 	if err != nil {
 		return fmt.Errorf("profiles: %w", err)
 	}
-	mon, runtimes, err := buildBackends(cfg)
+	mon, runtimes, err := buildBackends(cfg, cfg.StateDir)
 	if err != nil {
 		return err
 	}
@@ -189,7 +189,7 @@ func cmdCheck(args []string) error {
 		return fmt.Errorf("files:\n%w", err)
 	}
 	fmt.Println("files:  ok")
-	if _, _, err := buildBackends(cfg); err != nil {
+	if _, _, err := buildBackends(cfg, ""); err != nil {
 		return fmt.Errorf("backends: %w", err)
 	}
 	fmt.Println("gpu:    ok")
