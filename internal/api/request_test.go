@@ -196,3 +196,26 @@ func TestExtractUsage(t *testing.T) {
 		t.Errorf("garbage should yield zero usage, got %+v", u)
 	}
 }
+
+func TestSSETailFindsFinalChunkAcrossReads(t *testing.T) {
+	var tl sseTail
+	// Split awkwardly across reads, CRLF line endings, a non-final chunk with
+	// no timings, then the llama-server-style final chunk, then [DONE].
+	parts := []string{
+		"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\r\n\r\ndata: {\"choices\":[{\"finish_reason\":\"stop\",\"delta\":{}}],\"tim",
+		"ings\":{\"prompt_per_second\":200.5,\"predicted_per_second\":31.25},\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":17}}\r\n",
+		"\r\ndata: [DONE]\n\n",
+	}
+	for _, p := range parts {
+		tl.observe([]byte(p))
+	}
+	u := tl.usage()
+	if u.PromptTokens != 9 || u.CompletionTokens != 17 || u.PromptTPS != 200.5 || u.GenTPS != 31.25 {
+		t.Errorf("usage = %+v", u)
+	}
+	var empty sseTail
+	empty.observe([]byte("data: {\"choices\":[]}\n\ndata: [DONE]\n\n"))
+	if empty.usage() != (scheduler.Usage{}) {
+		t.Error("stream without timings should yield zero usage")
+	}
+}

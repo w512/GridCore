@@ -302,7 +302,7 @@ func (p *proxy) forward(ctx context.Context, w http.ResponseWriter, committed bo
 			res.err = &upstreamError{status: resp.StatusCode, body: raw}
 			return res
 		}
-		res.err = relay(w, rc, resp.Body)
+		res.usage, res.err = relay(w, rc, resp.Body)
 		return res
 	}
 
@@ -322,7 +322,7 @@ func (p *proxy) forward(ctx context.Context, w http.ResponseWriter, committed bo
 	}
 	if stream {
 		w.WriteHeader(resp.StatusCode)
-		res.err = relay(w, rc, resp.Body)
+		res.usage, res.err = relay(w, rc, resp.Body)
 		return res
 	}
 	raw, err := io.ReadAll(resp.Body)
@@ -341,24 +341,64 @@ func (p *proxy) forward(ctx context.Context, w http.ResponseWriter, committed bo
 }
 
 // relay copies an SSE body flushing after every read so tokens reach the
-// client as soon as the runtime produces them.
-func relay(w http.ResponseWriter, rc *http.ResponseController, body io.Reader) error {
+// client as soon as the runtime produces them. It also watches the stream
+// for the final chunk: llama-server attaches "timings" (and "usage" when
+// stream_options.include_usage is set) to it, which feeds the profile.
+func relay(w http.ResponseWriter, rc *http.ResponseController, body io.Reader) (scheduler.Usage, error) {
 	buf := make([]byte, 32<<10)
+	var last sseTail
 	for {
 		n, err := body.Read(buf)
 		if n > 0 {
+			last.observe(buf[:n])
 			if _, werr := w.Write(buf[:n]); werr != nil {
-				return werr
+				return last.usage(), werr
 			}
 			_ = rc.Flush()
 		}
 		if err == io.EOF {
-			return nil
+			return last.usage(), nil
 		}
 		if err != nil {
-			return err
+			return last.usage(), err
 		}
 	}
+}
+
+// sseTail keeps the most recent complete "data:" payload that carries usage
+// or timings. It only looks at line boundaries, so it is cheap.
+type sseTail struct {
+	pending []byte
+	found   []byte
+}
+
+func (t *sseTail) observe(p []byte) {
+	t.pending = append(t.pending, p...)
+	for {
+		i := bytes.IndexByte(t.pending, '\n')
+		if i < 0 {
+			break
+		}
+		line := bytes.TrimRight(t.pending[:i], "\r")
+		t.pending = t.pending[i+1:]
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		payload := bytes.TrimSpace(line[5:])
+		if bytes.Contains(payload, []byte(`"timings"`)) || bytes.Contains(payload, []byte(`"usage"`)) {
+			t.found = append(t.found[:0], payload...)
+		}
+	}
+	if len(t.pending) > 1<<20 {
+		t.pending = t.pending[len(t.pending)-1<<20:] // never grow without bound
+	}
+}
+
+func (t *sseTail) usage() scheduler.Usage {
+	if len(t.found) == 0 {
+		return scheduler.Usage{}
+	}
+	return extractUsage(t.found)
 }
 
 // call performs a request and returns status and body (chunked embeddings).

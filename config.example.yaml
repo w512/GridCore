@@ -16,9 +16,11 @@ gpu:
 
 runtimes:
   llamacpp:
-    binary: /opt/llama.cpp/bin/llama-server
+    # Prebuilt CUDA binaries from https://github.com/ggml-org/llama.cpp/releases
+    # (llama-<tag>-bin-ubuntu-cuda-*.tar.gz + cudart-*.tar.gz unpacked together).
+    binary: /opt/llama.cpp/current/llama-server
     port_range: [41000, 41999]
-    load_timeout: 120s
+    load_timeout: 180s
     default_args: ["--flash-attn", "on"]
 
 models:
@@ -28,7 +30,8 @@ models:
     capabilities: [chat]
     ctx: 8192
     parallel: 2
-    args: ["--jinja"]
+    # Qwen3 thinks by default; a 32-token answer would be all reasoning.
+    args: ["--reasoning-budget", "0"]
     aliases: [gpt-4o, default-chat]
 
   nomic-embed:
