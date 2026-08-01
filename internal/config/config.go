@@ -85,10 +85,13 @@ type Model struct {
 	Path         string   `yaml:"path"`
 	MMProj       string   `yaml:"mmproj"`
 	Capabilities []string `yaml:"capabilities"`
-	Ctx          int      `yaml:"ctx"`
-	Parallel     int      `yaml:"parallel"`
-	Args         []string `yaml:"args"`
-	Aliases      []string `yaml:"aliases"`
+	// Ctx is the total context pool shared by all slots (llama-server
+	// --ctx-size). Parallel is the slot count (--parallel) and therefore the
+	// model's request concurrency.
+	Ctx      int      `yaml:"ctx"`
+	Parallel int      `yaml:"parallel"`
+	Args     []string `yaml:"args"`
+	Aliases  []string `yaml:"aliases"`
 	// Pinned models are preloaded at start and never evicted.
 	Pinned bool `yaml:"pinned"`
 	// Preload loads the model at start but leaves it evictable.

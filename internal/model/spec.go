@@ -111,11 +111,12 @@ func (s *Spec) EstimateVRAMMB() int {
 	if weights == 0 {
 		return 0 // unknown; caller must treat as "cannot admit without measuring"
 	}
-	// Weights + ~15% for compute buffers and CUDA context.
-	est := float64(weights) * 1.15
+	// Weights + ~10% for compute buffers and CUDA context.
+	est := float64(weights) * 1.10
 	// KV cache: ~160 KB/token for a 14B GQA model in f16; scale with size but
-	// never assume less than 64 KB/token.
+	// never assume less than 64 KB/token. Ctx is the total pool shared by all
+	// slots (llama-server --ctx-size), so it is not multiplied by Parallel.
 	kvPerTok := max(float64(weights)/60000.0, 64*1024)
-	est += kvPerTok * float64(s.Ctx*s.Parallel)
+	est += kvPerTok * float64(s.Ctx)
 	return int(est / (1024 * 1024))
 }

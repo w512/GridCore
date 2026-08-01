@@ -28,6 +28,8 @@ models:
     runtime: llamacpp
     path: ~/models/Qwen3-14B-Q4_K_M.gguf
     capabilities: [chat]
+    # ctx is the total context pool shared by all slots (llama-server
+    # --ctx-size); parallel is the number of slots (--parallel).
     ctx: 8192
     parallel: 2
     # Qwen3 thinks by default; a 32-token answer would be all reasoning.
