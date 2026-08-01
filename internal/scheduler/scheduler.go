@@ -128,14 +128,15 @@ func New(cfg *config.Config, runtimes map[string]runtime.Runtime, mon gpu.Monito
 			return nil, fmt.Errorf("scheduler: no runtime implementation for %q", name)
 		}
 		s.ports[name] = newPortAllocator(rc.PortRange[0], rc.PortRange[1])
-		s.binaryIDs[name] = binaryID(rc)
+		s.binaryIDs[name] = BinaryID(rc)
 	}
 	return s, nil
 }
 
-// binaryID encodes the runtime binary identity so a rebuilt llama.cpp
-// invalidates stored profiles.
-func binaryID(rc config.Runtime) string {
+// BinaryID encodes the runtime binary identity so a rebuilt llama.cpp
+// invalidates stored profiles. `gridcore bench` uses it to write profiles
+// under the same key the scheduler reads.
+func BinaryID(rc config.Runtime) string {
 	if rc.Type == config.RuntimeFake {
 		return "fake"
 	}

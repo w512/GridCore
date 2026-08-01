@@ -4,6 +4,7 @@
 //	gridcore check   [--config PATH]                     validate config and files
 //	gridcore status  [--addr HOST:PORT] [--watch]        show scheduler state
 //	gridcore models  [--config PATH]                     list configured models
+//	gridcore bench   [--all] <model-id>...               measure VRAM, load time, throughput
 //	gridcore version
 package main
 
@@ -49,6 +50,8 @@ func main() {
 		err = cmdStatus(os.Args[2:])
 	case "models":
 		err = cmdModels(os.Args[2:])
+	case "bench":
+		err = cmdBench(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("gridcore", version)
 	case "help", "-h", "--help":
@@ -72,6 +75,7 @@ Usage:
   gridcore check   [--config PATH]
   gridcore status  [--addr HOST:PORT] [--watch] [--json]
   gridcore models  [--config PATH]
+  gridcore bench   [--config PATH] [--all] [--prompt N] [--gen N] <model-id>...
   gridcore version
 
 Config defaults to $XDG_CONFIG_HOME/gridcore/config.yaml (or $GRIDCORE_CONFIG).
