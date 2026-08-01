@@ -1,0 +1,28 @@
+# systemd user unit for GridCore.
+#
+#   mkdir -p ~/.config/systemd/user ~/.config/gridcore
+#   cp deploy/gridcore.service ~/.config/systemd/user/
+#   cp config.example.yaml ~/.config/gridcore/config.yaml   # and edit paths
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now gridcore
+#   loginctl enable-linger $USER      # keep it running when logged out
+#
+# Logs: journalctl --user -u gridcore -f
+# Child llama-server logs: ~/.local/state/gridcore/logs/
+
+[Unit]
+Description=GridCore - workload scheduler for local AI
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gridcore serve
+Restart=on-failure
+RestartSec=2
+# Give in-flight generations time to finish on stop.
+TimeoutStopSec=40
+KillMode=mixed
+Environment=GRIDCORE_CONFIG=%h/.config/gridcore/config.yaml
+
+[Install]
+WantedBy=default.target

@@ -7,7 +7,7 @@ LDFLAGS  := -s -w -X main.version=$(VERSION)
 HOST     ?= gpu-box
 REMOTE   ?= ~/gridcore
 
-.PHONY: all build linux test vet lint run deploy clean
+.PHONY: all build linux test vet lint run deploy install-service clean
 
 all: vet test build
 
@@ -27,7 +27,12 @@ run: build
 	$(BIN) serve --config examples/fake-demo.yaml --state-dir /tmp/gridcore-state
 
 deploy: linux
-	rsync -avz $(BIN)-linux-amd64 $(HOST):$(REMOTE)/gridcore
+	rsync -az $(BIN)-linux-amd64 $(HOST):.local/bin/gridcore
+
+# Install and (re)start the user service on the GPU box.
+install-service: deploy
+	rsync -az deploy/gridcore.service $(HOST):.config/systemd/user/gridcore.service
+	ssh $(HOST) 'systemctl --user daemon-reload && systemctl --user enable gridcore >/dev/null && systemctl --user restart gridcore && sleep 1 && systemctl --user --no-pager status gridcore | head -5'
 
 clean:
 	rm -rf bin
