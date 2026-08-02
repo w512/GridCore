@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -90,33 +89,8 @@ func (s *Spec) ProfileKey(binaryID, gpuName string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// EstimateVRAMMB is the pre-measurement guess used for admission until a
-// Profile exists. It is deliberately pessimistic.
-//
-// TODO(M2): read GGUF metadata (block_count, head_count_kv, head_dim) for a
-// real KV-cache estimate instead of the file-size heuristic.
+// EstimateVRAMMB is the pre-measurement admission size. See EstimateVRAM
+// for the breakdown.
 func (s *Spec) EstimateVRAMMB() int {
-	if s.RuntimeType == config.RuntimeFake {
-		return s.FakeVRAMMB
-	}
-	var weights int64
-	if st, err := os.Stat(s.Path); err == nil {
-		weights = st.Size()
-	}
-	if s.MMProj != "" {
-		if st, err := os.Stat(s.MMProj); err == nil {
-			weights += st.Size()
-		}
-	}
-	if weights == 0 {
-		return 0 // unknown; caller must treat as "cannot admit without measuring"
-	}
-	// Weights + ~10% for compute buffers and CUDA context.
-	est := float64(weights) * 1.10
-	// KV cache: ~160 KB/token for a 14B GQA model in f16; scale with size but
-	// never assume less than 64 KB/token. Ctx is the total pool shared by all
-	// slots (llama-server --ctx-size), so it is not multiplied by Parallel.
-	kvPerTok := max(float64(weights)/60000.0, 64*1024)
-	est += kvPerTok * float64(s.Ctx)
-	return int(est / (1024 * 1024))
+	return EstimateVRAM(s).TotalMB
 }

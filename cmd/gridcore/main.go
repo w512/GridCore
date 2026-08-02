@@ -74,7 +74,7 @@ Usage:
   gridcore serve   [--config PATH] [--state-dir DIR] [--log-level LEVEL]
   gridcore check   [--config PATH]
   gridcore status  [--addr HOST:PORT] [--watch] [--json]
-  gridcore models  [--config PATH]
+  gridcore models  [--config PATH] [--explain]
   gridcore bench   [--config PATH] [--all] [--prompt N] [--gen N] <model-id>...
   gridcore version
 
@@ -203,6 +203,7 @@ func cmdCheck(args []string) error {
 func cmdModels(args []string) error {
 	fs := flag.NewFlagSet("models", flag.ExitOnError)
 	cfgPath := configFlag(fs)
+	explain := fs.Bool("explain", false, "show the VRAM estimate breakdown per model (reads GGUF headers)")
 	_ = fs.Parse(args)
 
 	cfg, err := loadConfig(*cfgPath, "")
@@ -214,7 +215,8 @@ func cmdModels(args []string) error {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	fmt.Printf("%-16s %-12s %-22s %6s %4s  %s\n", "ID", "RUNTIME", "CAPABILITIES", "CTX", "PAR", "FLAGS")
+	specs := model.FromConfig(cfg)
+	fmt.Printf("%-16s %-12s %-22s %6s %4s %8s  %s\n", "ID", "RUNTIME", "CAPABILITIES", "CTX", "PAR", "EST MB", "FLAGS")
 	for _, id := range ids {
 		m := cfg.Models[id]
 		flags := ""
@@ -226,7 +228,11 @@ func cmdModels(args []string) error {
 		if len(m.Aliases) > 0 {
 			flags += fmt.Sprintf("aliases=%v", m.Aliases)
 		}
-		fmt.Printf("%-16s %-12s %-22s %6d %4d  %s\n", id, m.Runtime, strings.Join(m.Capabilities, ","), m.Ctx, m.Parallel, flags)
+		est := model.EstimateVRAM(specs[id])
+		fmt.Printf("%-16s %-12s %-22s %6d %4d %8d  %s\n", id, m.Runtime, strings.Join(m.Capabilities, ","), m.Ctx, m.Parallel, est.TotalMB, flags)
+		if *explain {
+			fmt.Printf("%-16s   %s\n", "", est)
+		}
 	}
 	return nil
 }
