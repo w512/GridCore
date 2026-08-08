@@ -49,6 +49,14 @@ func TestProfileKeyIgnoresArgOrderButNotValues(t *testing.T) {
 	}
 }
 
+func TestProfileKeyFakeModelsDiffer(t *testing.T) {
+	a := &Spec{ID: "a", RuntimeType: "fake", Ctx: 4096, Parallel: 1}
+	b := &Spec{ID: "b", RuntimeType: "fake", Ctx: 4096, Parallel: 1}
+	if a.ProfileKey("fake", "gpu") == b.ProfileKey("fake", "gpu") {
+		t.Error("fake models without a path must not share a profile")
+	}
+}
+
 func TestEstimateVRAMUnknownFile(t *testing.T) {
 	s := &Spec{RuntimeType: "llamacpp", Path: "/does/not/exist.gguf", Ctx: 4096, Parallel: 1}
 	if got := s.EstimateVRAMMB(); got != 0 {

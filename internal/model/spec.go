@@ -79,8 +79,12 @@ func (s *Spec) HasCapability(cap string) bool {
 func (s *Spec) ProfileKey(binaryID, gpuName string) string {
 	args := append([]string(nil), s.Args...)
 	sort.Strings(args)
+	path := s.Path
+	if path == "" { // fake models have no file; identify them by id
+		path = "id:" + s.ID
+	}
 	parts := []string{
-		s.RuntimeType, s.Path, s.MMProj,
+		s.RuntimeType, path, s.MMProj,
 		fmt.Sprint(s.Ctx), fmt.Sprint(s.Parallel),
 		strings.Join(args, "\x00"),
 		binaryID, gpuName,

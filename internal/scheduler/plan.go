@@ -156,6 +156,13 @@ func (s *Scheduler) ensureLoaded(sp *model.Spec, c job.Class, now time.Time) (st
 		}
 		return "loading", nil
 	}
+	// Memory of instances already being evicted is on its way back; do not
+	// pick further victims while it would be enough.
+	if pending := s.pendingFreeMB(); need <= avail+pending {
+		return "evicting", nil
+	} else {
+		avail += pending
+	}
 	victims := s.res.Victims(need-avail, c, now)
 	if victims == nil {
 		return "waiting", nil
@@ -164,6 +171,18 @@ func (s *Scheduler) ensureLoaded(sp *model.Spec, c job.Class, now time.Time) (st
 		s.evict(v, "make room for "+sp.ID)
 	}
 	return "evicting", nil
+}
+
+// pendingFreeMB is the footprint of entries marked for eviction that have
+// not been removed yet (draining or stopping).
+func (s *Scheduler) pendingFreeMB() int {
+	n := 0
+	for _, e := range s.res.All() {
+		if e.Evicting {
+			n += e.VRAMMB
+		}
+	}
+	return n
 }
 
 func (s *Scheduler) startLoad(sp *model.Spec, needMB int, now time.Time) error {

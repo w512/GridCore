@@ -553,3 +553,49 @@ func TestShutdownFailsQueuedAndStopsInstances(t *testing.T) {
 		t.Errorf("submit after stop: %v", err)
 	}
 }
+
+func TestEvictsOnlyAsMuchAsNeeded(t *testing.T) {
+	// Reproduces a bug seen on real hardware: two 7 GB models resident, a
+	// 1 GB model requested. One victim frees plenty, but while it drained
+	// the planner re-ran, saw no free memory yet, and evicted the second
+	// model too. Memory of draining instances must count as pending.
+	models := "  a: { runtime: sim, capabilities: [chat], fake_vram_mb: 7000, fake_load_time: 10ms }\n" +
+		"  b: { runtime: sim, capabilities: [chat], fake_vram_mb: 7000, fake_load_time: 10ms }\n" +
+		"  c: { runtime: sim, capabilities: [chat], fake_vram_mb: 1000, fake_load_time: 10ms }\n"
+	h := newHarness(t, 16000, models)
+	h.rt.StopDelay = 200 * time.Millisecond // teardown takes many ticks
+	for _, id := range []string{"a", "b"} {
+		if err := h.s.LoadModel(id); err != nil {
+			t.Fatal(err)
+		}
+		h.eventually(isReady(id), id+" loaded")
+		h.clock.Advance(time.Second) // a is LRU
+	}
+	// budget 15488 - 7512 - 7512 = 464 free; c needs 1512 -> evict exactly one.
+	inter := h.submit(job.Interactive, "c", 1)
+	time.Sleep(80 * time.Millisecond) // ~16 ticks while a drains
+	st := h.s.State()
+	var evicting, ready []string
+	for _, r := range st.Resident {
+		switch r.State {
+		case "draining", "stopping":
+			evicting = append(evicting, r.ID)
+		case "ready":
+			ready = append(ready, r.ID)
+		}
+	}
+	if len(evicting) != 1 || evicting[0] != "a" || len(ready) != 1 || ready[0] != "b" {
+		t.Fatalf("expected only a evicting and b ready, got evicting=%v ready=%v\n%s", evicting, ready, h.dump())
+	}
+	g := h.grant(inter, wait)
+	inter.StepDone(g.Step, nil, Usage{})
+	if err := h.finish(inter, wait); err != nil {
+		t.Fatal(err)
+	}
+	if r := h.resident("b"); r == nil || r.State != "ready" {
+		t.Fatalf("b must survive: %+v", r)
+	}
+	if n := len(h.events(EvEvict)); n != 1 {
+		t.Errorf("evict events = %d, want 1", n)
+	}
+}

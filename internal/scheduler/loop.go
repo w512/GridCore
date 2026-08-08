@@ -261,6 +261,9 @@ func (s *Scheduler) onLoaded(e evLoaded) {
 	ent.Instance = e.inst
 	ent.State = residency.Ready
 	ent.LoadedAt = now
+	if ent.LastUsed.IsZero() {
+		ent.LastUsed = now // never-used models are LRU-ordered by load time
+	}
 	key := s.profileKey(ent.Spec)
 	_ = s.store.Update(key, e.id, func(p *model.Profile) { p.ObserveLoad(dur) })
 	if p, ok := s.store.Get(key); ok && p.VRAMMB > 0 {

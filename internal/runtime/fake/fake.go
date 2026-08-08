@@ -37,6 +37,8 @@ type Runtime struct {
 	RequestDelay time.Duration
 	// LoadTimeout bounds Load regardless of fake_load_time.
 	LoadTimeout time.Duration
+	// StopDelay makes Stop take this long, simulating process teardown.
+	StopDelay time.Duration
 	// FailLoad, if set, makes every Load fail after the load delay. Tests use
 	// it to exercise crash/retry paths. Read under mu so tests may flip it
 	// while the scheduler is running.
@@ -133,14 +135,15 @@ func (r *Runtime) Load(ctx context.Context, spec *model.Spec, port int) (runtime
 	}
 
 	inst := &Instance{
-		spec:    spec,
-		addr:    ln.Addr().String(),
-		pid:     int(nextPID.Add(1)),
-		started: time.Now(),
-		done:    make(chan struct{}),
-		delay:   r.RequestDelay,
-		gpu:     r.gpu,
-		rt:      r,
+		spec:      spec,
+		addr:      ln.Addr().String(),
+		pid:       int(nextPID.Add(1)),
+		started:   time.Now(),
+		done:      make(chan struct{}),
+		delay:     r.RequestDelay,
+		stopDelay: r.StopDelay,
+		gpu:       r.gpu,
+		rt:        r,
 	}
 	inst.srv = &http.Server{Handler: inst.handler()}
 	go func() {
@@ -161,14 +164,15 @@ func (r *Runtime) Load(ctx context.Context, spec *model.Spec, port int) (runtime
 
 // Instance implements runtime.Instance.
 type Instance struct {
-	spec    *model.Spec
-	addr    string
-	pid     int
-	started time.Time
-	delay   time.Duration
-	gpu     *gpufake.Monitor
-	rt      *Runtime
-	srv     *http.Server
+	spec      *model.Spec
+	addr      string
+	pid       int
+	started   time.Time
+	delay     time.Duration
+	stopDelay time.Duration
+	gpu       *gpufake.Monitor
+	rt        *Runtime
+	srv       *http.Server
 
 	inflight atomic.Int32
 	peak     atomic.Int32
@@ -222,6 +226,12 @@ func (i *Instance) Health(ctx context.Context) error {
 // behind, which Shutdown treats as "new" and waits on for 5 s (Go issue
 // 22682). A real process gets SIGTERM and does not have that problem.
 func (i *Instance) Stop(ctx context.Context) error {
+	if i.stopDelay > 0 {
+		select {
+		case <-time.After(i.stopDelay):
+		case <-ctx.Done():
+		}
+	}
 	if i.gpu != nil {
 		i.gpu.Detach(i.pid)
 	}
