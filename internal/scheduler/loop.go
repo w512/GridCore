@@ -248,9 +248,27 @@ func (s *Scheduler) onLoaded(e evLoaded) {
 		if errors.Is(e.err, runtime.ErrLoadTimeout) {
 			outcome = "timeout"
 		}
-		s.m.ModelLoadsTotal.WithLabelValues(e.id, outcome).Inc()
 		s.event(EvLoadFail, e.id, e.err.Error())
-		s.log.Error("model load failed", "model", e.id, "err", e.err, "took", dur)
+		attrs := []any{"model", e.id, "err", e.err, "took", dur, "reserved_mb", ent.VRAMMB}
+		var det runtime.Detailed
+		if errors.As(e.err, &det) {
+			attrs = append(attrs, "output", det.Tail())
+		}
+		s.log.Error("model load failed", attrs...)
+		// Out of memory means the admission size was wrong: forget the stored
+		// measurement so the next attempt starts from a fresh estimate, and
+		// remember to be more careful.
+		var oom runtime.OOMError
+		if errors.As(e.err, &oom) && oom.OOM() {
+			outcome = "oom"
+			key := s.profileKey(ent.Spec)
+			if p, ok := s.store.Get(key); ok && p.VRAMMB > 0 {
+				_ = s.store.Update(key, e.id, func(p *model.Profile) { p.VRAMMB = 0 })
+				s.event(EvLoadFail, e.id, fmt.Sprintf("out of memory with reserved %d MB; stored profile (%d MB) discarded", ent.VRAMMB, p.VRAMMB))
+				s.log.Warn("profile discarded after OOM", "model", e.id, "profile_mb", p.VRAMMB, "reserved_mb", ent.VRAMMB)
+			}
+		}
+		s.m.ModelLoadsTotal.WithLabelValues(e.id, outcome).Inc()
 		// Jobs that triggered this load learn the real cause; only later
 		// arrivals see the breaker.
 		s.failQueuedFor(e.id, fmt.Errorf("%w: %v", ErrLoadFailed, e.err), "load_error")

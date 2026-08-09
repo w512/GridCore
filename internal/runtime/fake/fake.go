@@ -64,6 +64,13 @@ func (r *Runtime) failStatus() int {
 	return r.requestStatus
 }
 
+// OOMError simulates a device out-of-memory failure during load.
+type OOMError struct{ Msg string }
+
+func (e *OOMError) Error() string { return "fake: " + e.Msg }
+func (e *OOMError) OOM() bool     { return true }
+func (e *OOMError) Tail() string  { return "--- fake output ---\n" + e.Msg }
+
 // SetFailLoad changes FailLoad safely while loads may be in progress.
 func (r *Runtime) SetFailLoad(err error) {
 	r.mu.Lock()

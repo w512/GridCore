@@ -177,7 +177,38 @@ func TestLoadCrashIncludesTail(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "exited during load") || !strings.Contains(err.Error(), "pretend the model file is corrupt") {
-		t.Errorf("error should include exit info and log tail:\n%v", err)
+		t.Errorf("error should include exit info and the summary line:\n%v", err)
+	}
+	var le *LoadError
+	if !errors.As(err, &le) {
+		t.Fatalf("want *LoadError, got %T", err)
+	}
+	if !strings.Contains(le.Tail(), "stub llama-server starting") {
+		t.Errorf("tail should hold full output: %q", le.Tail())
+	}
+	if strings.Count(err.Error(), "\n") > 0 {
+		t.Errorf("Error() must be a single line for API clients: %q", err.Error())
+	}
+	if le.OOM() {
+		t.Error("corrupt-file failure must not look like OOM")
+	}
+}
+
+func TestSummaryAndOOM(t *testing.T) {
+	tl := newTail(10)
+	tl.Write([]byte("0.00.1 I srv init\n0.00.2 E alloc_tensor_range: failed to allocate CUDA0 buffer of size 8558218240\n0.00.3 E llama_model_load: error loading model: unable to allocate CUDA0 buffer\n0.00.4 I srv exiting\n"))
+	sum := tl.Summary()
+	if !strings.HasPrefix(sum, "llama_model_load: error loading model") {
+		t.Errorf("summary should be the last E line, got %q", sum)
+	}
+	le := &LoadError{Model: "m", Cause: errors.New("exit 1"), Summary: sum, tail: tl.String()}
+	if !le.OOM() {
+		t.Error("CUDA allocation failure must be detected as OOM")
+	}
+	plain := newTail(3)
+	plain.Write([]byte("hello\nworld\n"))
+	if plain.Summary() != "world" {
+		t.Errorf("fallback summary = %q", plain.Summary())
 	}
 }
 

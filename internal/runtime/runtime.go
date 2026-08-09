@@ -51,3 +51,17 @@ type Instance interface {
 
 // StopGrace is how long Stop waits after SIGTERM before SIGKILL.
 const StopGrace = 5 * time.Second
+
+// Detailed is implemented by load errors that carry extra context (process
+// output) which belongs in logs rather than in the one-line error.
+type Detailed interface {
+	error
+	Tail() string
+}
+
+// OOMError is implemented by load errors caused by the device running out
+// of memory. The scheduler treats it as "the admission size was wrong".
+type OOMError interface {
+	error
+	OOM() bool
+}

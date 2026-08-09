@@ -189,11 +189,11 @@ func (r *Runtime) Load(ctx context.Context, spec *model.Spec, port int) (runtime
 	for {
 		select {
 		case <-inst.done:
-			return nil, fmt.Errorf("llamacpp: %s exited during load: %v\n%s", spec.ID, inst.Err(), tail.String())
+			return nil, &LoadError{Model: spec.ID, Cause: fmt.Errorf("exited during load: %v", inst.Err()), tail: tail.String(), Summary: tail.Summary()}
 		case <-ctx.Done():
 			_ = inst.Stop(context.Background())
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return nil, fmt.Errorf("%w (%s)\n%s", runtime.ErrLoadTimeout, spec.ID, tail.String())
+				return nil, &LoadError{Model: spec.ID, Cause: runtime.ErrLoadTimeout, tail: tail.String(), Summary: tail.Summary()}
 			}
 			return nil, ctx.Err()
 		case <-tick.C:
@@ -203,6 +203,38 @@ func (r *Runtime) Load(ctx context.Context, spec *model.Spec, port int) (runtime
 			}
 		}
 	}
+}
+
+// LoadError is a failed load with the server's output attached. Error()
+// stays short (one summary line) so it can be shown to API clients; Tail()
+// has the full context for logs.
+type LoadError struct {
+	Model   string
+	Cause   error
+	Summary string // most relevant output line (last error, else last line)
+	tail    string
+}
+
+func (e *LoadError) Error() string {
+	if e.Summary != "" {
+		return fmt.Sprintf("llamacpp: %s %v: %s", e.Model, e.Cause, e.Summary)
+	}
+	return fmt.Sprintf("llamacpp: %s %v", e.Model, e.Cause)
+}
+
+func (e *LoadError) Unwrap() error { return e.Cause }
+
+// Tail returns the last lines of llama-server output.
+func (e *LoadError) Tail() string { return e.tail }
+
+// OOM reports whether the output indicates the device ran out of memory.
+func (e *LoadError) OOM() bool { return looksLikeOOM(e.Summary) || looksLikeOOM(e.tail) }
+
+func looksLikeOOM(s string) bool {
+	l := strings.ToLower(s)
+	return strings.Contains(l, "out of memory") ||
+		(strings.Contains(l, "failed to allocate") && (strings.Contains(l, "cuda") || strings.Contains(l, "buffer"))) ||
+		strings.Contains(l, "unable to allocate")
 }
 
 // Instance is one llama-server process.
@@ -336,6 +368,35 @@ func (t *tail) push(line string) {
 	if len(t.lines) > t.n {
 		t.lines = t.lines[len(t.lines)-t.n:]
 	}
+}
+
+// Summary picks the most informative line: the last one llama-server
+// logged at error level, otherwise the last non-empty line.
+func (t *tail) Summary() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	lines := append([]string(nil), t.lines...)
+	if len(t.buf) > 0 {
+		lines = append(lines, string(t.buf))
+	}
+	var last string
+	for i := len(lines) - 1; i >= 0; i-- {
+		l := strings.TrimSpace(lines[i])
+		if l == "" {
+			continue
+		}
+		if last == "" {
+			last = l
+		}
+		// llama.cpp log format: "<time> E <component> message"
+		if f := strings.Fields(l); len(f) > 2 && f[1] == "E" {
+			return strings.TrimSpace(strings.Join(f[2:], " "))
+		}
+		if strings.Contains(strings.ToLower(l), "error") {
+			return l
+		}
+	}
+	return last
 }
 
 func (t *tail) String() string {

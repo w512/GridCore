@@ -3,10 +3,12 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gridcore/gridcore/internal/job"
+	rtfake "github.com/gridcore/gridcore/internal/runtime/fake"
 )
 
 const (
@@ -598,4 +600,61 @@ func TestEvictsOnlyAsMuchAsNeeded(t *testing.T) {
 	if n := len(h.events(EvEvict)); n != 1 {
 		t.Errorf("evict events = %d, want 1", n)
 	}
+}
+
+func TestOOMDiscardsProfile(t *testing.T) {
+	h := newHarness(t, 16000, chat)
+	// First load succeeds and measures 9000 MB into the profile.
+	a := h.submit(job.Interactive, "chat", 1)
+	if err := h.runToCompletion(a, wait); err != nil {
+		t.Fatal(err)
+	}
+	h.eventually(func(st State) bool {
+		for _, r := range st.Resident {
+			if r.ID == "chat" && r.Measured {
+				return true
+			}
+		}
+		return false
+	}, "chat VRAM measured by a gpu snapshot")
+	if err := h.s.UnloadModel("chat"); err != nil {
+		t.Fatal(err)
+	}
+	h.eventually(notResident("chat"), "unloaded")
+	key := h.s.specs["chat"].ProfileKey("fake", "FakeGPU")
+	if p, ok := h.s.store.Get(key); !ok || p.VRAMMB != 9000 {
+		t.Fatalf("profile after first load = %+v ok=%v", p, ok)
+	}
+
+	// Next load hits OOM: the profile must be discarded, the job fails.
+	h.rt.SetFailLoad(&rtfake.OOMError{Msg: "failed to allocate CUDA0 buffer"})
+	b := h.submit(job.Interactive, "chat", 1)
+	if err := h.finish(b, wait); !errors.Is(err, ErrLoadFailed) {
+		t.Fatalf("want ErrLoadFailed, got %v", err)
+	}
+	if p, ok := h.s.store.Get(key); ok && p.VRAMMB != 0 {
+		t.Fatalf("profile VRAM must be reset after OOM, got %d", p.VRAMMB)
+	}
+	found := false
+	for _, e := range h.events(EvLoadFail) {
+		if strings.Contains(e.Detail, "discarded") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a 'profile discarded' event, got %+v", h.events(EvLoadFail))
+	}
+
+	// Recovery: load works again and the estimate (+headroom) is used.
+	h.rt.SetFailLoad(nil)
+	c := h.submit(job.Interactive, "chat", 1)
+	if err := h.runToCompletion(c, wait); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range h.s.State().Events {
+		if e.Kind == EvLoad && strings.Contains(e.Detail, "reserve 9512") {
+			return
+		}
+	}
+	t.Errorf("after OOM the reservation should come from the estimate (9000+512), events: %v", h.events(EvLoad))
 }
