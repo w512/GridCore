@@ -198,8 +198,8 @@ func TestSummaryAndOOM(t *testing.T) {
 	tl := newTail(10)
 	tl.Write([]byte("0.00.1 I srv init\n0.00.2 E alloc_tensor_range: failed to allocate CUDA0 buffer of size 8558218240\n0.00.3 E llama_model_load: error loading model: unable to allocate CUDA0 buffer\n0.00.4 I srv exiting\n"))
 	sum := tl.Summary()
-	if !strings.HasPrefix(sum, "llama_model_load: error loading model") {
-		t.Errorf("summary should be the last E line, got %q", sum)
+	if !strings.HasPrefix(sum, "alloc_tensor_range: failed to allocate CUDA0 buffer") {
+		t.Errorf("summary should be the first E line (root cause), got %q", sum)
 	}
 	le := &LoadError{Model: "m", Cause: errors.New("exit 1"), Summary: sum, tail: tl.String()}
 	if !le.OOM() {

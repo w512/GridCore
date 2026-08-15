@@ -370,8 +370,9 @@ func (t *tail) push(line string) {
 	}
 }
 
-// Summary picks the most informative line: the last one llama-server
-// logged at error level, otherwise the last non-empty line.
+// Summary picks the most informative line: the first one llama-server
+// logged at error level (the root cause; later ones are consequences),
+// otherwise the last line mentioning an error, otherwise the last line.
 func (t *tail) Summary() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -379,22 +380,23 @@ func (t *tail) Summary() string {
 	if len(t.buf) > 0 {
 		lines = append(lines, string(t.buf))
 	}
-	var last string
-	for i := len(lines) - 1; i >= 0; i-- {
-		l := strings.TrimSpace(lines[i])
+	var last, lastErr string
+	for _, raw := range lines {
+		l := strings.TrimSpace(raw)
 		if l == "" {
 			continue
 		}
-		if last == "" {
-			last = l
-		}
+		last = l
 		// llama.cpp log format: "<time> E <component> message"
 		if f := strings.Fields(l); len(f) > 2 && f[1] == "E" {
 			return strings.TrimSpace(strings.Join(f[2:], " "))
 		}
 		if strings.Contains(strings.ToLower(l), "error") {
-			return l
+			lastErr = l
 		}
+	}
+	if lastErr != "" {
+		return lastErr
 	}
 	return last
 }
