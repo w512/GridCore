@@ -658,3 +658,71 @@ func TestOOMDiscardsProfile(t *testing.T) {
 	}
 	t.Errorf("after OOM the reservation should come from the estimate (9000+512), events: %v", h.events(EvLoad))
 }
+
+func TestBoundedStarvationUnderContinuousInteractive(t *testing.T) {
+	h := newHarness(t, 16000, chat+embed)
+	// Keep the GPU in interactive mode for the whole test: one interactive
+	// job is always running (chat has one slot; we keep it busy).
+	cur := h.submit(job.Interactive, "chat", 1)
+	g := h.grant(cur, wait)
+
+	bg := h.submit(job.Background, "embed", 6)
+	// Interactive mode, no starvation yet -> nothing for background even
+	// though embed could be loaded and run.
+	h.noGrant(bg, 60*time.Millisecond)
+	if st := h.s.State(); st.Mode != "interactive" {
+		t.Fatalf("mode = %s", st.Mode)
+	}
+
+	// Past the starvation limit (3s default): exactly one step goes through.
+	h.clock.Advance(3100 * time.Millisecond)
+	g0 := h.grant(bg, wait)
+	if g0.Step != 0 {
+		t.Fatalf("step = %d", g0.Step)
+	}
+	h.noGrant(bg, 60*time.Millisecond) // one at a time while interactive is active
+	if len(h.events(EvPreempt)) != 1 {
+		t.Errorf("expected one starvation event, got %d", len(h.events(EvPreempt)))
+	}
+
+	// Finishing the step resets progress; the next one waits for the limit again.
+	bg.StepDone(g0.Step, nil, Usage{})
+	h.noGrant(bg, 60*time.Millisecond)
+	h.clock.Advance(3100 * time.Millisecond)
+	g1 := h.grant(bg, wait)
+	if g1.Step != 1 {
+		t.Fatalf("step = %d", g1.Step)
+	}
+	bg.StepDone(g1.Step, nil, Usage{})
+
+	// Interactive goes idle: the remaining steps flow freely (all slots).
+	cur.StepDone(g.Step, nil, Usage{})
+	_ = h.finish(cur, wait)
+	h.clock.Advance(100 * time.Millisecond) // past the 30ms idle window
+	var got []int
+	for i := 0; i < 4; i++ {
+		got = append(got, h.grant(bg, wait).Step)
+	}
+	if len(got) != 4 {
+		t.Fatalf("remaining steps should all be dispatched at once, got %v", got)
+	}
+	for _, s := range got {
+		bg.StepDone(s, nil, Usage{})
+	}
+	if err := h.finish(bg, wait); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStarvationGuardDisabled(t *testing.T) {
+	h := newHarnessWith(t, 16000, chat+embed, "  background_max_starvation: 0s\n")
+	cur := h.submit(job.Interactive, "chat", 1)
+	g := h.grant(cur, wait)
+	bg := h.submit(job.Background, "embed", 2)
+	h.clock.Advance(time.Minute)
+	h.noGrant(bg, 60*time.Millisecond)
+	cur.StepDone(g.Step, nil, Usage{})
+	_ = h.finish(cur, wait)
+	h.clock.Advance(100 * time.Millisecond)
+	_ = h.runToCompletion(bg, wait)
+}

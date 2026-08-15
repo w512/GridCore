@@ -28,8 +28,20 @@ func (s *Scheduler) schedule() {
 	interactive := s.interactiveMode(now)
 	s.setMode(interactive, now)
 	if interactive {
+		// Bounded starvation: once the head of the lower queues has waited
+		// too long, let a single step through even though interactive work
+		// is active. Its impact is one small step's worth of contention.
+		if head := s.starvedHead(now); head != nil && s.runningLowerSteps() == 0 {
+			before := head.dispatched
+			s.planJobLimited(head, now, 1)
+			if head.dispatched > before {
+				s.event(EvPreempt, head.job.ID, fmt.Sprintf("%s starved %s; running one step alongside interactive", head.job.Class, now.Sub(head.lastProgress).Round(time.Millisecond)))
+			}
+		}
 		for _, js := range s.q.list(job.Background) {
-			js.reason = "interactive mode"
+			if js.reason == "" || js.remaining() > 0 {
+				js.reason = "interactive mode"
+			}
 		}
 		for _, js := range s.q.list(job.Batch) {
 			js.reason = "interactive mode"
@@ -82,9 +94,50 @@ func (s *Scheduler) setMode(interactive bool, now time.Time) {
 	}
 }
 
+// starvedHead returns the oldest-progress background/batch job that has
+// been held back longer than policy.background_max_starvation, or nil.
+func (s *Scheduler) starvedHead(now time.Time) *jobState {
+	limit := s.cfg.Policy.BackgroundMaxStarvation
+	if limit <= 0 {
+		return nil
+	}
+	var head *jobState
+	for _, c := range []job.Class{job.Background, job.Batch} {
+		for _, js := range s.q.list(c) {
+			if js.failed || js.remaining() == 0 {
+				continue
+			}
+			if head == nil || js.lastProgress.Before(head.lastProgress) {
+				head = js
+			}
+		}
+	}
+	if head == nil || now.Sub(head.lastProgress) < limit {
+		return nil
+	}
+	return head
+}
+
+// runningLowerSteps counts in-flight background/batch steps.
+func (s *Scheduler) runningLowerSteps() int {
+	n := 0
+	for _, js := range s.jobs {
+		if js.job.Class != job.Interactive {
+			n += js.inflight
+		}
+	}
+	return n
+}
+
 // planJob tries to dispatch as many steps of js as possible right now, or
 // starts whatever is needed (load, eviction) so it can run later.
 func (s *Scheduler) planJob(js *jobState, now time.Time) {
+	s.planJobLimited(js, now, 0)
+}
+
+// planJobLimited is planJob with a cap on steps dispatched in this pass
+// (0 = no cap).
+func (s *Scheduler) planJobLimited(js *jobState, now time.Time, maxSteps int) {
 	if js.failed || js.remaining() == 0 {
 		return
 	}
@@ -102,8 +155,10 @@ func (s *Scheduler) planJob(js *jobState, now time.Time) {
 		case residency.Draining, residency.Stopping:
 			js.reason = "model unloading"
 		case residency.Ready:
-			for js.remaining() > 0 && ent.FreeSlots() > 0 {
+			n := 0
+			for js.remaining() > 0 && ent.FreeSlots() > 0 && (maxSteps == 0 || n < maxSteps) {
 				s.dispatch(js, ent, now)
+				n++
 			}
 			if js.remaining() > 0 {
 				js.reason = "waiting for slot"

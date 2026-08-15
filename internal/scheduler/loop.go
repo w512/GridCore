@@ -93,6 +93,7 @@ func (s *Scheduler) onSubmit(e evSubmit) {
 	}
 	s.jobs[js.job.ID] = js
 	js.job.State = job.Queued
+	js.lastProgress = s.now()
 	s.q.push(js)
 	s.event(EvEnqueue, js.job.ID, fmt.Sprintf("%s %s %s steps=%d", js.job.Class, js.job.Kind, js.job.ModelID, js.job.Steps))
 }
@@ -109,6 +110,7 @@ func (s *Scheduler) onStepDone(e evStepDone) {
 	}
 	delete(js.steps, e.step)
 	js.inflight--
+	js.lastProgress = now
 	if ent, ok := s.res.Get(entryID); ok && ent.State != residency.Loading {
 		if ent.Running > 0 {
 			ent.Running--

@@ -113,7 +113,10 @@ type jobState struct {
 	failed     bool
 	failErr    error
 	firstGrant time.Time
-	reason     string // why it is waiting (for /admin/state)
+	// lastProgress is when the job was enqueued or last finished a step;
+	// the starvation guard measures from here.
+	lastProgress time.Time
+	reason       string // why it is waiting (for /admin/state)
 
 	// instances that hold steps of this job, for slot return on completion
 	steps     map[int]string    // step -> resident entry id

@@ -52,4 +52,9 @@ policy:
   classes:
     interactive: { hot_ttl: 2m }
   interactive_idle_before_background: 2s
+  # Under continuous interactive traffic, let one background/batch step run
+  # alongside it once the background queue has made no progress for this
+  # long. "0s" = strict exclusivity (background may starve). Durations need
+  # a unit: 3s, 500ms.
+  background_max_starvation: 3s
   embedding_chunk_size: 32

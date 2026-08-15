@@ -72,8 +72,17 @@ models:
 
 func newHarness(t *testing.T, totalMB int, models string) *harness {
 	t.Helper()
+	return newHarnessWith(t, totalMB, models, "")
+}
+
+// newHarnessWith appends extra lines to the policy section.
+func newHarnessWith(t *testing.T, totalMB int, models, extraPolicy string) *harness {
+	t.Helper()
 	lo := int(testPortBase.Add(50))
 	src := fmt.Sprintf(baseYAML, lo, lo+49, models)
+	if extraPolicy != "" {
+		src = strings.Replace(src, "  embedding_chunk_size: 4\n", "  embedding_chunk_size: 4\n"+extraPolicy, 1)
+	}
 	cfg, err := config.Parse([]byte(src))
 	if err != nil {
 		t.Fatalf("config: %v\n%s", err, src)

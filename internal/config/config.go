@@ -107,7 +107,13 @@ type Policy struct {
 	DefaultClass                    job.Class                 `yaml:"default_class"`
 	Classes                         map[job.Class]ClassPolicy `yaml:"classes"`
 	InteractiveIdleBeforeBackground time.Duration             `yaml:"interactive_idle_before_background"`
-	EmbeddingChunkSize              int                       `yaml:"embedding_chunk_size"`
+	// BackgroundMaxStarvation bounds how long background/batch work can be
+	// held back by continuous interactive traffic. Once the head of the
+	// background queue has made no progress for this long, one background
+	// step at a time may run alongside interactive work. 0 disables the
+	// guarantee (strict exclusivity).
+	BackgroundMaxStarvation time.Duration `yaml:"background_max_starvation"`
+	EmbeddingChunkSize      int           `yaml:"embedding_chunk_size"`
 }
 
 type ClassPolicy struct {
@@ -230,6 +236,9 @@ func (c *Config) applyDefaults() {
 	if c.Policy.InteractiveIdleBeforeBackground == 0 {
 		c.Policy.InteractiveIdleBeforeBackground = 2 * time.Second
 	}
+	if c.Policy.BackgroundMaxStarvation == 0 {
+		c.Policy.BackgroundMaxStarvation = 3 * time.Second
+	}
 	if c.Policy.EmbeddingChunkSize == 0 {
 		c.Policy.EmbeddingChunkSize = 32
 	}
@@ -330,6 +339,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Policy.InteractiveIdleBeforeBackground < 0 {
 		add("policy.interactive_idle_before_background must be >= 0")
+	}
+	if c.Policy.BackgroundMaxStarvation < 0 {
+		add("policy.background_max_starvation must be >= 0")
 	}
 
 	return errors.Join(errs...)
