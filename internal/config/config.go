@@ -108,12 +108,20 @@ type Policy struct {
 	Classes                         map[job.Class]ClassPolicy `yaml:"classes"`
 	InteractiveIdleBeforeBackground time.Duration             `yaml:"interactive_idle_before_background"`
 	// BackgroundMaxStarvation bounds how long background/batch work can be
-	// held back by continuous interactive traffic. Once the head of the
-	// background queue has made no progress for this long, one background
-	// step at a time may run alongside interactive work. 0 disables the
-	// guarantee (strict exclusivity).
-	BackgroundMaxStarvation time.Duration `yaml:"background_max_starvation"`
-	EmbeddingChunkSize      int           `yaml:"embedding_chunk_size"`
+	// held back by continuous interactive traffic. Once a background job
+	// has made no progress for this long, one background step at a time may
+	// run alongside interactive work. Unset = 3s; "0s" disables the
+	// guarantee (strict exclusivity). A pointer so that 0 and unset differ.
+	BackgroundMaxStarvation *time.Duration `yaml:"background_max_starvation"`
+	EmbeddingChunkSize      int            `yaml:"embedding_chunk_size"`
+}
+
+// MaxStarvation returns the effective background_max_starvation.
+func (p Policy) MaxStarvation() time.Duration {
+	if p.BackgroundMaxStarvation == nil {
+		return 3 * time.Second
+	}
+	return *p.BackgroundMaxStarvation
 }
 
 type ClassPolicy struct {
@@ -236,9 +244,6 @@ func (c *Config) applyDefaults() {
 	if c.Policy.InteractiveIdleBeforeBackground == 0 {
 		c.Policy.InteractiveIdleBeforeBackground = 2 * time.Second
 	}
-	if c.Policy.BackgroundMaxStarvation == 0 {
-		c.Policy.BackgroundMaxStarvation = 3 * time.Second
-	}
 	if c.Policy.EmbeddingChunkSize == 0 {
 		c.Policy.EmbeddingChunkSize = 32
 	}
@@ -340,7 +345,7 @@ func (c *Config) Validate() error {
 	if c.Policy.InteractiveIdleBeforeBackground < 0 {
 		add("policy.interactive_idle_before_background must be >= 0")
 	}
-	if c.Policy.BackgroundMaxStarvation < 0 {
+	if c.Policy.BackgroundMaxStarvation != nil && *c.Policy.BackgroundMaxStarvation < 0 {
 		add("policy.background_max_starvation must be >= 0")
 	}
 

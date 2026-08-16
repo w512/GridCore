@@ -3,8 +3,8 @@ package scheduler
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -96,7 +96,7 @@ func newHarnessWith(t *testing.T, totalMB int, models, extraPolicy string) *harn
 	s, err := New(cfg, map[string]runtime.Runtime{"sim": rt}, gpu, store, metrics.New(), Options{
 		Tick:            5 * time.Millisecond,
 		Now:             clock.Now,
-		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:          slog.New(slog.NewTextHandler(testLogWriter{t}, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		BreakerWindow:   time.Minute,
 		ShutdownTimeout: 2 * time.Second,
 	})
@@ -268,4 +268,13 @@ func (h *harness) dump() string {
 		fmt.Fprintf(&b, " ev %-9s %-14s %s\n", e.Kind, e.Subject, e.Detail)
 	}
 	return b.String()
+}
+
+type testLogWriter struct{ t *testing.T }
+
+func (w testLogWriter) Write(p []byte) (int, error) {
+	if os.Getenv("GRIDCORE_TEST_LOG") != "" {
+		w.t.Log(strings.TrimSpace(string(p)))
+	}
+	return len(p), nil
 }

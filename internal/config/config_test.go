@@ -61,6 +61,23 @@ func TestParseAppliesDefaults(t *testing.T) {
 	if c.Policy.EmbeddingChunkSize != 32 || c.Policy.InteractiveIdleBeforeBackground != 2*time.Second {
 		t.Errorf("policy defaults = %+v", c.Policy)
 	}
+	if c.Policy.MaxStarvation() != 3*time.Second {
+		t.Errorf("background_max_starvation default = %v", c.Policy.MaxStarvation())
+	}
+}
+
+func TestStarvationZeroDisables(t *testing.T) {
+	c, err := Parse([]byte("policy:\n  background_max_starvation: 0s\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Policy.MaxStarvation() != 0 {
+		t.Errorf("0s must disable, got %v", c.Policy.MaxStarvation())
+	}
+	c, _ = Parse([]byte("policy:\n  background_max_starvation: 500ms\n"))
+	if c.Policy.MaxStarvation() != 500*time.Millisecond {
+		t.Errorf("got %v", c.Policy.MaxStarvation())
+	}
 }
 
 func TestParseEmptyIsValid(t *testing.T) {

@@ -28,14 +28,20 @@ func (s *Scheduler) schedule() {
 	interactive := s.interactiveMode(now)
 	s.setMode(interactive, now)
 	if interactive {
-		// Bounded starvation: once the head of the lower queues has waited
-		// too long, let a single step through even though interactive work
-		// is active. Its impact is one small step's worth of contention.
-		if head := s.starvedHead(now); head != nil && s.runningLowerSteps() == 0 {
-			before := head.dispatched
-			s.planJobLimited(head, now, 1)
-			if head.dispatched > before {
-				s.event(EvPreempt, head.job.ID, fmt.Sprintf("%s starved %s; running one step alongside interactive", head.job.Class, now.Sub(head.lastProgress).Round(time.Millisecond)))
+		// Bounded starvation: once lower-class jobs have waited too long, let
+		// a single step through even though interactive work is active. Its
+		// impact is one small step's worth of contention. Jobs are tried
+		// oldest-progress first, but one whose model cannot be made resident
+		// (e.g. it would need to evict a hot model) must not block others
+		// whose model is already loaded.
+		if s.runningLowerSteps() == 0 {
+			for _, js := range s.starvedJobs(now) {
+				before := js.dispatched
+				s.planJobLimited(js, now, 1)
+				if js.dispatched > before {
+					s.event(EvPreempt, js.job.ID, fmt.Sprintf("%s starved %s; running one step alongside interactive", js.job.Class, now.Sub(js.lastProgress).Round(time.Millisecond)))
+					break
+				}
 			}
 		}
 		for _, js := range s.q.list(job.Background) {
@@ -94,28 +100,24 @@ func (s *Scheduler) setMode(interactive bool, now time.Time) {
 	}
 }
 
-// starvedHead returns the oldest-progress background/batch job that has
-// been held back longer than policy.background_max_starvation, or nil.
-func (s *Scheduler) starvedHead(now time.Time) *jobState {
-	limit := s.cfg.Policy.BackgroundMaxStarvation
+// starvedJobs returns background/batch jobs that have made no progress for
+// longer than policy.background_max_starvation, oldest first.
+func (s *Scheduler) starvedJobs(now time.Time) []*jobState {
+	limit := s.cfg.Policy.MaxStarvation()
 	if limit <= 0 {
 		return nil
 	}
-	var head *jobState
+	var out []*jobState
 	for _, c := range []job.Class{job.Background, job.Batch} {
 		for _, js := range s.q.list(c) {
-			if js.failed || js.remaining() == 0 {
+			if js.failed || js.remaining() == 0 || now.Sub(js.lastProgress) < limit {
 				continue
 			}
-			if head == nil || js.lastProgress.Before(head.lastProgress) {
-				head = js
-			}
+			out = append(out, js)
 		}
 	}
-	if head == nil || now.Sub(head.lastProgress) < limit {
-		return nil
-	}
-	return head
+	sort.Slice(out, func(i, j int) bool { return out[i].lastProgress.Before(out[j].lastProgress) })
+	return out
 }
 
 // runningLowerSteps counts in-flight background/batch steps.

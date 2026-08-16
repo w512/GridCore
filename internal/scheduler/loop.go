@@ -93,7 +93,7 @@ func (s *Scheduler) onSubmit(e evSubmit) {
 	}
 	s.jobs[js.job.ID] = js
 	js.job.State = job.Queued
-	js.lastProgress = s.now()
+	js.lastProgress = js.job.Enqueued // starvation is measured from arrival
 	s.q.push(js)
 	s.event(EvEnqueue, js.job.ID, fmt.Sprintf("%s %s %s steps=%d", js.job.Class, js.job.Kind, js.job.ModelID, js.job.Steps))
 }

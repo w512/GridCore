@@ -726,3 +726,38 @@ func TestStarvationGuardDisabled(t *testing.T) {
 	h.clock.Advance(100 * time.Millisecond)
 	_ = h.runToCompletion(bg, wait)
 }
+
+func TestStarvationGuardSkipsUnloadableHead(t *testing.T) {
+	// chat (9512) is hot and busy; vision (6512) cannot be loaded next to it
+	// (budget 15488) and background may not evict hot models. A background
+	// job on vision is the oldest starved job; an embed job whose model is
+	// resident must still get its step.
+	// Starvation limit (100ms) below hot_ttl (200ms) so chat stays hot.
+	h := newHarnessWith(t, 16000, chat+vision+pinned, "  background_max_starvation: 100ms\n")
+	h.eventually(isReady("embed"), "pinned loaded")
+	cur := h.submit(job.Interactive, "chat", 1)
+	g := h.grant(cur, wait)
+
+	bgVision := h.submit(job.Background, "vision", 1)
+	h.clock.Advance(10 * time.Millisecond)
+	bgEmbed := h.submit(job.Background, "embed", 3)
+	h.clock.Advance(150 * time.Millisecond)
+
+	ge := h.grant(bgEmbed, wait)
+	if ge.Model != "embed" {
+		t.Fatalf("grant = %+v", ge)
+	}
+	h.noGrant(bgVision, 40*time.Millisecond)
+	if r := h.resident("chat"); r == nil || r.State != "ready" {
+		t.Fatalf("hot chat must not be evicted for background: %+v", r)
+	}
+	bgEmbed.StepDone(ge.Step, nil, Usage{})
+	cur.StepDone(g.Step, nil, Usage{})
+	_ = h.finish(cur, wait)
+	// Idle and past hot_ttl: embed finishes; vision may now evict cold chat.
+	h.clock.Advance(300 * time.Millisecond)
+	_ = h.runToCompletion(bgEmbed, wait)
+	gv := h.grant(bgVision, wait)
+	bgVision.StepDone(gv.Step, nil, Usage{})
+	_ = h.finish(bgVision, wait)
+}
