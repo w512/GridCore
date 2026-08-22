@@ -7,11 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gridcore/gridcore/internal/job"
@@ -39,11 +42,47 @@ func newProxy() *proxy {
 			DialContext:         (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
 			MaxIdleConns:        64,
 			MaxIdleConnsPerHost: 16,
-			IdleConnTimeout:     90 * time.Second,
+			// llama-server (cpp-httplib) drops idle keep-alive connections
+			// after ~5s; expire ours first so we never reuse a dead one.
+			IdleConnTimeout: 2 * time.Second,
 			// llama-server sends chunked SSE; never buffer.
 			DisableCompression: true,
 		},
 	}}
+}
+
+// doWithRetry sends a request whose body is replayable and retries once
+// when the transport fails before any response arrived (typically a
+// keep-alive connection the server closed underneath us).
+func (p *proxy) doWithRetry(ctx context.Context, method, url string, body []byte, hdr http.Header) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range hdr {
+			req.Header[k] = v
+		}
+		resp, err := p.client.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || !isRetryableTransport(err) {
+			break
+		}
+		slog.Warn("upstream transport error, retrying once", "url", url, "err", err)
+	}
+	return nil, lastErr
+}
+
+func isRetryableTransport(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "connection reset") || strings.Contains(s, "EOF") || strings.Contains(s, "broken pipe") || strings.Contains(s, "server closed idle connection")
 }
 
 // inference is the shared handler for the three OpenAI endpoints.
@@ -271,16 +310,13 @@ type stepResult struct {
 // committed is true the SSE response has already started, so upstream errors
 // are delivered as SSE error events.
 func (p *proxy) forward(ctx context.Context, w http.ResponseWriter, committed bool, addr, path string, body []byte, stream bool) stepResult {
-	upReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+path, bytes.NewReader(body))
-	if err != nil {
-		return stepResult{err: err}
-	}
-	upReq.Header.Set("Content-Type", "application/json")
+	hdr := http.Header{"Content-Type": {"application/json"}}
 	if stream {
-		upReq.Header.Set("Accept", "text/event-stream")
+		hdr.Set("Accept", "text/event-stream")
 	}
-	resp, err := p.client.Do(upReq)
+	resp, err := p.doWithRetry(ctx, http.MethodPost, "http://"+addr+path, body, hdr)
 	if err != nil {
+		slog.Warn("upstream unreachable", "addr", addr, "path", path, "err", err)
 		if !committed {
 			if ctx.Err() == nil {
 				WriteError(w, http.StatusBadGateway, "server_error", "upstream_unreachable", "inference runtime did not respond: "+err.Error())
@@ -403,13 +439,9 @@ func (t *sseTail) usage() scheduler.Usage {
 
 // call performs a request and returns status and body (chunked embeddings).
 func (p *proxy) call(ctx context.Context, addr, path string, body []byte) (int, []byte, error) {
-	upReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+path, bytes.NewReader(body))
+	resp, err := p.doWithRetry(ctx, http.MethodPost, "http://"+addr+path, body, http.Header{"Content-Type": {"application/json"}})
 	if err != nil {
-		return 0, nil, err
-	}
-	upReq.Header.Set("Content-Type", "application/json")
-	resp, err := p.client.Do(upReq)
-	if err != nil {
+		slog.Warn("upstream unreachable", "addr", addr, "path", path, "err", err)
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
