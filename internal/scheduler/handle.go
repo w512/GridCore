@@ -84,6 +84,11 @@ func (h *Handle) Err() error {
 	return h.err
 }
 
+// Cancel asks the scheduler to drop the job. Done is closed once the
+// scheduler has processed it; grants issued before that must still be
+// reported via StepDone (see the API layer's abandon()).
+func (h *Handle) Cancel() { h.s.send(evCancel{id: h.job.ID}) }
+
 // StepDone reports the outcome of a granted step. err != nil fails the job;
 // remaining in-flight steps are expected to be abandoned by the caller.
 func (h *Handle) StepDone(step int, err error, u Usage) {

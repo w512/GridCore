@@ -126,6 +126,7 @@ func (s *Server) inference(kind job.Kind) http.HandlerFunc {
 func (s *Server) single(w http.ResponseWriter, r *http.Request, req *inferenceRequest, h *scheduler.Handle) {
 	g, committed, err := waitGrant(w, r, req, h)
 	if err != nil {
+		abandon(h, err)
 		writeJobError(w, committed, err)
 		return
 	}
@@ -203,6 +204,7 @@ func (s *Server) chunked(w http.ResponseWriter, r *http.Request, req *inferenceR
 			go runChunk(g)
 		case <-h.Done():
 			wg.Wait()
+			abandon(h, h.Err()) // grants delivered before the failure must not leak slots
 			if err := h.Err(); err != nil {
 				mu.Lock()
 				up := firstErr
@@ -251,6 +253,23 @@ type embeddingUsage struct {
 	TotalTokens  int `json:"total_tokens"`
 }
 
+// abandon returns any grants already sitting in the channel to the
+// scheduler as failed steps. Without this a client that disconnects at the
+// same instant a grant is issued would leave the slot busy forever.
+func abandon(h *scheduler.Handle, cause error) {
+	if cause == nil {
+		cause = errors.New("abandoned")
+	}
+	for {
+		select {
+		case g := <-h.Grants():
+			h.StepDone(g.Step, cause, scheduler.Usage{})
+		default:
+			return
+		}
+	}
+}
+
 // waitGrant blocks until the job gets its first grant or terminates. For
 // streaming requests that wait longer than keepaliveAfter it commits an SSE
 // response and emits comments so clients and proxies keep the connection.
@@ -293,8 +312,22 @@ func waitGrant(w http.ResponseWriter, r *http.Request, req *inferenceRequest, h 
 			_, _ = io.WriteString(w, ": gridcore queued\n\n")
 			_ = rc.Flush()
 		case <-r.Context().Done():
-			// Client went away; the scheduler learns via job.Ctx.
-			return scheduler.Grant{}, committed, scheduler.ErrCancelled
+			// Client went away. Tell the scheduler and wait until it has
+			// stopped dispatching; grants that were already on their way are
+			// handed back so no slot leaks.
+			h.Cancel()
+			settle := time.NewTimer(10 * time.Second)
+			defer settle.Stop()
+			for {
+				select {
+				case g := <-h.Grants():
+					h.StepDone(g.Step, scheduler.ErrCancelled, scheduler.Usage{})
+				case <-h.Done():
+					return scheduler.Grant{}, committed, scheduler.ErrCancelled
+				case <-settle.C:
+					return scheduler.Grant{}, committed, scheduler.ErrCancelled
+				}
+			}
 		}
 	}
 }

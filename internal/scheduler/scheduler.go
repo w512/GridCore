@@ -372,6 +372,9 @@ stop:
 	pending := 0
 	for _, e := range s.res.All() {
 		if e.Instance != nil && e.State != residency.Stopping {
+			// Past the drain deadline nothing is coming back; stop anyway
+			// rather than leak the process to the next start's reaper.
+			e.Running = 0
 			s.stopEntry(e, "shutdown")
 			pending++
 		} else if e.State == residency.Stopping {

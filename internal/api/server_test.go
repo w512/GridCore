@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -442,5 +443,53 @@ func TestConcurrentMixedLoad(t *testing.T) {
 	}
 	if peak := l.rt.Instance("embed").PeakConcurrency(); peak > 4 {
 		t.Errorf("embed parallel=4 but peak concurrency was %d", peak)
+	}
+}
+
+// TestCancelRaceDoesNotLeakSlots fires many requests that are cancelled at
+// roughly the moment they are granted. Whatever the interleaving, every slot
+// must be free afterwards.
+func TestCancelRaceDoesNotLeakSlots(t *testing.T) {
+	l := newLive(t)
+	// Warm the model so grants are immediate.
+	resp := l.post(t, "/v1/chat/completions", `{"model":"chat","messages":[]}`, nil)
+	resp.Body.Close()
+
+	const n = 60
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			ctx, cancel := context.WithCancel(context.Background())
+			body := `{"model":"chat","messages":[],"stream":` + fmt.Sprint(i%2 == 0) + `}`
+			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, l.ts.URL+"/v1/chat/completions", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			go func() {
+				time.Sleep(time.Duration(i%7) * 300 * time.Microsecond)
+				cancel()
+			}()
+			if r, err := http.DefaultClient.Do(req); err == nil {
+				io.Copy(io.Discard, r.Body)
+				r.Body.Close()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		st := l.sched.State()
+		busy := 0
+		for _, r := range st.Resident {
+			busy += r.BusySlots
+		}
+		if busy == 0 && len(st.Running) == 0 && len(st.Queued) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("leaked after cancel race: busy=%d running=%d queued=%d", busy, len(st.Running), len(st.Queued))
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
