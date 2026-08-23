@@ -77,6 +77,16 @@ func (p *proxy) doWithRetry(ctx context.Context, method, url string, body []byte
 	return nil, lastErr
 }
 
+// logUpstreamErr logs a failed upstream call; a client that went away is
+// routine and only logged at debug level.
+func logUpstreamErr(ctx context.Context, addr, path string, err error) {
+	if ctx.Err() != nil {
+		slog.Debug("upstream request cancelled by client", "addr", addr, "path", path)
+		return
+	}
+	slog.Warn("upstream unreachable", "addr", addr, "path", path, "err", err)
+}
+
 func isRetryableTransport(err error) bool {
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
 		return true
@@ -349,7 +359,7 @@ func (p *proxy) forward(ctx context.Context, w http.ResponseWriter, committed bo
 	}
 	resp, err := p.doWithRetry(ctx, http.MethodPost, "http://"+addr+path, body, hdr)
 	if err != nil {
-		slog.Warn("upstream unreachable", "addr", addr, "path", path, "err", err)
+		logUpstreamErr(ctx, addr, path, err)
 		if !committed {
 			if ctx.Err() == nil {
 				WriteError(w, http.StatusBadGateway, "server_error", "upstream_unreachable", "inference runtime did not respond: "+err.Error())
@@ -474,7 +484,7 @@ func (t *sseTail) usage() scheduler.Usage {
 func (p *proxy) call(ctx context.Context, addr, path string, body []byte) (int, []byte, error) {
 	resp, err := p.doWithRetry(ctx, http.MethodPost, "http://"+addr+path, body, http.Header{"Content-Type": {"application/json"}})
 	if err != nil {
-		slog.Warn("upstream unreachable", "addr", addr, "path", path, "err", err)
+		logUpstreamErr(ctx, addr, path, err)
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
