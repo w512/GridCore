@@ -39,12 +39,12 @@ func newProxy() *proxy {
 		// No overall timeout: generations can run for minutes and streaming
 		// responses stay open. Cancellation comes from the request context.
 		Transport: &http.Transport{
-			DialContext:         (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
-			MaxIdleConns:        64,
-			MaxIdleConnsPerHost: 16,
-			// llama-server (cpp-httplib) drops idle keep-alive connections
-			// after ~5s; expire ours first so we never reuse a dead one.
-			IdleConnTimeout: 2 * time.Second,
+			DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+			// llama-server (cpp-httplib) closes a keep-alive connection after
+			// a handful of requests and a few idle seconds; reusing one that
+			// the server already closed cost us a failed request each time.
+			// Connections are loopback, so a fresh one per request is cheap.
+			DisableKeepAlives: true,
 			// llama-server sends chunked SSE; never buffer.
 			DisableCompression: true,
 		},
