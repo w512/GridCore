@@ -174,31 +174,33 @@ Two scenarios from a 16 GB RTX 4060 Ti with real models
 ```
 Start background indexing: 1000 documents in 32-document chunks
 150 ms later a user starts chatting
-   interactive gemma4-12b     HTTP 200  0.25s  queue     0ms  A GPU scheduler decides ...
+   interactive gemma4-12b     HTTP 200  1.23s  queue     0ms  A GPU scheduler manages and coordinates ...
 Indexing finishes after the chat
-   background  nomic-embed    HTTP 200  3.03s  items=1000
+   background  nomic-embed    HTTP 200  4.04s  items=1000
 
-   09:22:05.064 enqueue   background embedding nomic-embed steps=32
-   09:22:05.064 dispatch  background step 1/32 -> nomic-embed
-   09:22:05.215 enqueue   interactive chat gemma4-12b steps=1
-   09:22:05.215 dispatch  interactive step 1/1 -> gemma4-12b
-   09:22:05.215 mode      gpu              interactive
-   09:22:05.466 complete  interactive gemma4-12b
-   09:22:07.500 mode      gpu              idle
-   09:22:07.934 dispatch  background step 32/32 -> nomic-embed
+   11:20:27.194 enqueue   background embedding nomic-embed steps=32
+   11:20:27.194 dispatch  background step 1/32 -> nomic-embed
+   11:20:27.500 enqueue   interactive chat gemma4-12b steps=1
+   11:20:27.500 dispatch  interactive step 1/1 -> gemma4-12b
+   11:20:27.500 mode      gpu              interactive
+   11:20:28.731 complete  interactive gemma4-12b
+   11:20:30.833 mode      gpu              idle
+   11:20:31.032 dispatch  background step 32/32 -> nomic-embed
+   11:20:31.078 complete  background nomic-embed
 ```
 
 ```
-Interactive request for qwen3-14b: does not fit next to gemma4-12b -> evict, load, run
-   interactive qwen3-14b      HTTP 200  2.09s  queue  1936ms  Red, blue and green.
-Now qwen3-14b is hot. A background request for gemma4-12b must NOT evict it
-   background  gemma4-12b     HTTP 503  3.11s  (max_wait 3s)
+Interactive request for qwen3-14b: does not fit next to gemma4-12b -> evict (it is idle), load, run
+   interactive qwen3-14b      HTTP 200  2.35s  queue  1789ms  Sure! Here are three colors: 1. Red 2. ...
+Now qwen3-14b is hot. A background request for gemma4-12b must NOT evict it: it waits and times out
+   background  gemma4-12b     HTTP 503  3.01s  (max_wait 3s)
 
-   evict     gemma4-12b       make room for qwen3-14b (running=0)
-   unloaded  gemma4-12b       evicted
-   load      qwen3-14b        reserve 9732 MB port=41002
-   loaded    qwen3-14b        1.6s pid=168148 addr=127.0.0.1:41002
-   timeout   84ef64b1         max_wait exceeded while queued
+   11:20:33.057 evict     gemma4-12b       make room for qwen3-14b (running=0)
+   11:20:33.237 unloaded  gemma4-12b       evicted
+   11:20:33.237 load      qwen3-14b        reserve 9732 MB port=41002
+   11:20:34.847 loaded    qwen3-14b        1.6s pid=228902 addr=127.0.0.1:41002
+   11:20:34.847 dispatch  interactive step 1/1 -> qwen3-14b
+   11:20:38.434 timeout   max_wait exceeded while queued
 ```
 
 `gridcore status`:
