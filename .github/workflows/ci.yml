@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; echo "run gofmt -w ."; exit 1; }
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - name: build all targets
+        run: |
+          CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -trimpath -o /dev/null ./cmd/gridcore
+          CGO_ENABLED=0 GOOS=linux  GOARCH=arm64 go build -trimpath -o /dev/null ./cmd/gridcore
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o /dev/null ./cmd/gridcore
+      - name: fake demo smoke test
+        run: |
+          go build -o /tmp/gridcore ./cmd/gridcore
+          /tmp/gridcore check --config examples/fake-demo.yaml
+          /tmp/gridcore serve --config examples/fake-demo.yaml --state-dir /tmp/gc-state &
+          PID=$!
+          sleep 2
+          curl -fsS localhost:8080/health
+          curl -fsS localhost:8080/v1/chat/completions -H 'Content-Type: application/json' \
+            -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' | grep -q '"choices"'
+          scripts/demo-background-vs-interactive.sh
+          kill $PID
