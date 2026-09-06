@@ -32,7 +32,10 @@ models:
     # --ctx-size); parallel is the number of slots (--parallel).
     ctx: 8192
     parallel: 2
-    # Qwen3 thinks by default; a 32-token answer would be all reasoning.
+    # Modern instruct models (Qwen3, Gemma 4, Ornith) think by default; with a
+    # small max_tokens the whole answer ends up in reasoning_content and
+    # content is empty. Turn thinking off here and let clients that want it
+    # re-enable it per request.
     args: ["--reasoning-budget", "0"]
     aliases: [gpt-4o, default-chat]
 
