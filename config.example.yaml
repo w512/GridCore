@@ -1,5 +1,13 @@
-# GridCore example configuration.
-# Copy to ~/.config/gridcore/config.yaml and adjust paths.
+# GridCore example configuration for a 16 GB NVIDIA card.
+# Copy to ~/.config/gridcore/config.yaml and adjust the model paths.
+#
+# The model set below is a good fit for 16 GB: a 12B
+# generalist with vision as the interactive default, a small fast model for
+# ambient/background tasks, and a pinned embedder. All three stay resident
+# together (about 13 GB). Files are the official QAT quants from Hugging Face:
+#   google/gemma-4-12B-it-qat-q4_0-gguf   gemma-4-12b-it-qat-q4_0.gguf + mmproj-gemma-4-12b-it-qat-q4_0.gguf
+#   unsloth/gemma-4-E4B-it-qat-GGUF       gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf + mmproj-F16.gguf
+#   nomic-ai/nomic-embed-text-v1.5-GGUF   nomic-embed-text-v1.5.f16.gguf
 
 server:
   listen: 127.0.0.1:8080
@@ -10,35 +18,50 @@ gpu:
   # Artificial VRAM cap in MB. Useful to leave room for other apps or to
   # create memory pressure for testing. null = use device total.
   vram_limit_mb: null
-  # Safety margin for fragmentation / compute buffers.
+  # Safety margin. Estimates are GGUF-based and driver overhead is tracked
+  # separately, so 256-512 MB is plenty.
   headroom_mb: 512
   poll_interval: 500ms
 
 runtimes:
   llamacpp:
-    # Prebuilt CUDA binaries from https://github.com/ggml-org/llama.cpp/releases
-    # (llama-<tag>-bin-ubuntu-cuda-*.tar.gz + cudart-*.tar.gz unpacked together).
+    # scripts/install-llamacpp.sh installs a prebuilt CUDA release here.
     binary: /opt/llama.cpp/current/llama-server
     port_range: [41000, 41999]
     load_timeout: 180s
     default_args: ["--flash-attn", "on"]
 
 models:
-  qwen3-14b:
+  # Interactive default. Dense 12B, text + vision, ~8.5 GB, ~35 tok/s on a 4060 Ti.
+  gemma4-12b:
     runtime: llamacpp
-    path: ~/models/Qwen3-14B-Q4_K_M.gguf
-    capabilities: [chat]
+    path: ~/models/gemma-4-12b-it-qat-q4_0.gguf
+    mmproj: ~/models/mmproj-gemma-4-12b-it-qat-q4_0.gguf
+    capabilities: [chat, vision]
     # ctx is the total context pool shared by all slots (llama-server
     # --ctx-size); parallel is the number of slots (--parallel).
-    ctx: 8192
+    ctx: 16384
     parallel: 2
-    # Modern instruct models (Qwen3, Gemma 4, Ornith) think by default; with a
+    # Modern instruct models (Gemma 4, Qwen3, Ornith) think by default; with a
     # small max_tokens the whole answer ends up in reasoning_content and
-    # content is empty. Turn thinking off here and let clients that want it
+    # content is empty. Turn thinking off here; clients that want it can
     # re-enable it per request.
-    args: ["--reasoning-budget", "0"]
+    args: ["--reasoning-budget", "0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "64"]
     aliases: [gpt-4o, default-chat]
 
+  # Ambient / background tasks: screenshots, classification, quick answers.
+  # Text + vision + audio, ~4.2 GB, ~80 tok/s.
+  gemma4-e4b:
+    runtime: llamacpp
+    path: ~/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf
+    mmproj: ~/models/mmproj-gemma-4-E4B-F16.gguf
+    capabilities: [chat, vision]
+    ctx: 8192
+    parallel: 2
+    args: ["--reasoning-budget", "0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "64"]
+    aliases: [ambient]
+
+  # Embeddings. Pinned: preloaded at start and never evicted.
   nomic-embed:
     runtime: llamacpp
     path: ~/models/nomic-embed-text-v1.5.f16.gguf
@@ -47,20 +70,25 @@ models:
     parallel: 4
     pinned: true
 
-  qwen2.5-vl-7b:
-    runtime: llamacpp
-    path: ~/models/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf
-    mmproj: ~/models/mmproj-Qwen2.5-VL-7B-Instruct-f16.gguf
-    capabilities: [chat, vision]
-    ctx: 4096
-    parallel: 1
+  # A larger text-only model to see eviction at work: it does not fit next
+  # to gemma4-12b, so an interactive request for it evicts the idle one.
+  # qwen3-14b:
+  #   runtime: llamacpp
+  #   path: ~/models/Qwen3-14B-Q4_K_M.gguf        # Qwen/Qwen3-14B-GGUF
+  #   capabilities: [chat]
+  #   ctx: 8192
+  #   parallel: 2
+  #   args: ["--reasoning-budget", "0"]
 
 policy:
   default_class: interactive
   classes:
+    # A model that served an interactive request within hot_ttl is "hot":
+    # background work may not evict it.
     interactive: { priority: 100, hot_ttl: 5m }
     background:  { priority: 30 }
     batch:       { priority: 10 }
+  # Quiet period after the last interactive step before background may start.
   interactive_idle_before_background: 2s
   # Under continuous interactive traffic, let one background/batch step run
   # alongside it once the background queue has made no progress for this
