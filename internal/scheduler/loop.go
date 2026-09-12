@@ -133,7 +133,12 @@ func (s *Scheduler) onStepDone(e evStepDone) {
 
 	if e.err != nil {
 		if !js.failed {
-			s.fail(js, fmt.Errorf("%w: step %d: %v", ErrStepFailed, e.step, e.err), "step_error")
+			outcome := "step_error"
+			var sc interface{ StatusCode() int }
+			if errors.As(e.err, &sc) && sc.StatusCode() >= 400 && sc.StatusCode() < 500 {
+				outcome = "client_error" // the runtime rejected the request (e.g. context too long)
+			}
+			s.fail(js, fmt.Errorf("%w: step %d: %v", ErrStepFailed, e.step, e.err), outcome)
 		}
 	} else if !js.failed {
 		js.completed++
@@ -369,8 +374,17 @@ func (s *Scheduler) stopEntry(ent *residency.Entry, reason string) {
 func (s *Scheduler) onSnapshot(e evSnapshot) {
 	s.polling = false
 	if e.err != nil {
-		s.log.Warn("gpu snapshot failed", "err", e.err)
+		// Log the first failure and then every 20th (10s at the default
+		// poll interval) so a broken nvidia-smi does not flood the journal.
+		s.snapFailures++
+		if s.snapFailures == 1 || s.snapFailures%20 == 0 {
+			s.log.Warn("gpu snapshot failed", "err", e.err, "consecutive", s.snapFailures)
+		}
 		return
+	}
+	if s.snapFailures > 0 {
+		s.log.Info("gpu snapshot recovered", "after_failures", s.snapFailures)
+		s.snapFailures = 0
 	}
 	s.snap = e.snap
 	s.snapOK = true

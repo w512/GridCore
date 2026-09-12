@@ -523,6 +523,10 @@ type upstreamError struct {
 
 func (e *upstreamError) Error() string { return fmt.Sprintf("upstream status %d", e.status) }
 
+// StatusCode lets the scheduler tell client errors (4xx) from runtime
+// failures (5xx) when labelling outcomes.
+func (e *upstreamError) StatusCode() int { return e.status }
+
 func writeUpstreamError(w http.ResponseWriter, err error) {
 	var up *upstreamError
 	if errors.As(err, &up) {

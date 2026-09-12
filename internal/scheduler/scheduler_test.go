@@ -3,11 +3,18 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/gridcore/gridcore/internal/config"
+	"github.com/gridcore/gridcore/internal/gpu"
+	gpufake "github.com/gridcore/gridcore/internal/gpu/fake"
 	"github.com/gridcore/gridcore/internal/job"
+	"github.com/gridcore/gridcore/internal/runtime"
 	rtfake "github.com/gridcore/gridcore/internal/runtime/fake"
 )
 
@@ -760,4 +767,92 @@ func TestStarvationGuardSkipsUnloadableHead(t *testing.T) {
 	gv := h.grant(bgVision, wait)
 	bgVision.StepDone(gv.Step, nil, Usage{})
 	_ = h.finish(bgVision, wait)
+}
+
+func TestNewRejectsPinnedLargerThanLimit(t *testing.T) {
+	cfg, err := config.Parse([]byte(`
+gpu: { device: fake, vram_limit_mb: 4000, headroom_mb: 512 }
+runtimes:
+  sim: { type: fake }
+models:
+  big:   { runtime: sim, capabilities: [embedding], fake_vram_mb: 3000, pinned: true }
+  small: { runtime: sim, capabilities: [embedding], fake_vram_mb: 500, pinned: true }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gpu := gpufake.New("FakeGPU", 16000)
+	_, err = New(cfg, map[string]runtime.Runtime{"sim": rtfake.New("sim", gpu)}, gpu, nil, nil, Options{})
+	if err == nil || !strings.Contains(err.Error(), "pinned models") {
+		t.Fatalf("expected pinned-fit error, got %v", err)
+	}
+	// Same models, no limit: fine (the device decides at runtime).
+	cfg2, _ := config.Parse([]byte(`
+gpu: { device: fake, headroom_mb: 512 }
+runtimes:
+  sim: { type: fake }
+models:
+  big:   { runtime: sim, capabilities: [embedding], fake_vram_mb: 3000, pinned: true }
+  small: { runtime: sim, capabilities: [embedding], fake_vram_mb: 500, pinned: true }
+`))
+	if _, err := New(cfg2, map[string]runtime.Runtime{"sim": rtfake.New("sim", gpu)}, gpu, nil, nil, Options{}); err != nil {
+		t.Fatalf("without vram_limit_mb New must succeed: %v", err)
+	}
+}
+
+// flakyMonitor fails its first n snapshots.
+type flakyMonitor struct {
+	inner    gpu.Monitor
+	failures atomic.Int32
+	remain   atomic.Int32
+}
+
+func (m *flakyMonitor) Snapshot(ctx context.Context) (gpu.Snapshot, error) {
+	if m.remain.Add(-1) >= 0 {
+		m.failures.Add(1)
+		return gpu.Snapshot{}, errors.New("nvidia-smi: Unable to determine the device handle")
+	}
+	return m.inner.Snapshot(ctx)
+}
+
+func TestStartupRetriesFlakyGPU(t *testing.T) {
+	cfg, err := config.Parse([]byte(`
+gpu: { device: fake, headroom_mb: 512, poll_interval: 10ms }
+runtimes:
+  sim: { type: fake, port_range: [46000, 46049] }
+models:
+  embed: { runtime: sim, capabilities: [embedding], fake_vram_mb: 600, pinned: true }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := gpufake.New("FakeGPU", 16000)
+	mon := &flakyMonitor{inner: fake}
+	mon.remain.Store(2) // first two snapshots fail, third succeeds
+	rt := rtfake.New("sim", fake)
+	s, err := New(cfg, map[string]runtime.Runtime{"sim": rt}, mon, nil, nil, Options{
+		Tick: 5 * time.Millisecond, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = s.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		st := s.State()
+		for _, r := range st.Resident {
+			if r.ID == "embed" && r.State == "ready" {
+				if mon.failures.Load() < 2 {
+					t.Errorf("expected the monitor to have failed twice, got %d", mon.failures.Load())
+				}
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("pinned model never loaded after flaky start; state=%+v", s.State())
 }

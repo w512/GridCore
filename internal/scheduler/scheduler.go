@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gridcore/gridcore/internal/config"
@@ -88,6 +89,8 @@ type Scheduler struct {
 	lastInteractiveEnd time.Time
 	mode               string
 	shuttingDown       bool
+
+	snapFailures int // consecutive gpu snapshot failures, for log rate-limiting
 }
 
 // New wires a scheduler. runtimes is keyed by config runtime name.
@@ -101,6 +104,9 @@ func New(cfg *config.Config, runtimes map[string]runtime.Runtime, mon gpu.Monito
 	}
 	if m == nil {
 		m = metrics.New()
+	}
+	if err := checkPinnedFit(cfg); err != nil {
+		return nil, err
 	}
 	s := &Scheduler{
 		cfg:       cfg,
@@ -131,6 +137,38 @@ func New(cfg *config.Config, runtimes map[string]runtime.Runtime, mon gpu.Monito
 		s.binaryIDs[name] = BinaryID(rc)
 	}
 	return s, nil
+}
+
+// checkPinnedFit rejects a configuration whose pinned models cannot fit in
+// an explicitly configured VRAM budget. Pinned models are loaded at start
+// and never evicted, so this would otherwise fail on every boot. Without
+// vram_limit_mb the device total is unknown until the first snapshot; that
+// case is reported at preload time instead.
+func checkPinnedFit(cfg *config.Config) error {
+	if cfg.GPU.VRAMLimitMB == nil {
+		return nil
+	}
+	budget := *cfg.GPU.VRAMLimitMB - cfg.GPU.HeadroomMB
+	specs := model.FromConfig(cfg)
+	need := 0
+	var ids []string
+	for _, id := range sortedSpecIDs(specs) {
+		sp := specs[id]
+		if !sp.Pinned {
+			continue
+		}
+		est := model.EstimateVRAM(sp).TotalMB
+		if est <= 0 {
+			continue // unknown file; the load will tell
+		}
+		need += est + cfg.GPU.HeadroomMB
+		ids = append(ids, fmt.Sprintf("%s ~%d MB", id, est))
+	}
+	if need > budget {
+		return fmt.Errorf("pinned models (%s) need about %d MB but gpu.vram_limit_mb %d minus headroom %d leaves %d MB",
+			strings.Join(ids, ", "), need, *cfg.GPU.VRAMLimitMB, cfg.GPU.HeadroomMB, budget)
+	}
+	return nil
 }
 
 // BinaryID encodes the runtime binary identity so a rebuilt llama.cpp
@@ -272,8 +310,23 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	}()
 
 	// First snapshot synchronously: nothing can be admitted without a budget.
-	if err := s.snapshotSync(ctx); err != nil {
-		s.log.Warn("initial gpu snapshot failed; nothing will be admitted until one succeeds", "err", err)
+	// nvidia-smi can fail transiently while another process is tearing down
+	// its GPU context, so try a few times before giving up on the fast path.
+	var snapErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if snapErr = s.snapshotSync(ctx); snapErr == nil {
+			break
+		}
+		s.log.Debug("initial gpu snapshot failed", "attempt", attempt, "err", snapErr)
+		select {
+		case <-time.After(500 * time.Millisecond):
+		case <-ctx.Done():
+			s.shutdown()
+			return nil
+		}
+	}
+	if snapErr != nil {
+		s.log.Warn("initial gpu snapshot failed; nothing will be admitted until polling succeeds", "err", snapErr)
 	}
 	s.preload()
 
@@ -334,7 +387,11 @@ func (s *Scheduler) preload() {
 			}
 			status, err := s.ensureLoaded(sp, job.Background, now)
 			if err != nil {
-				s.log.Warn("preload failed", "model", id, "err", err)
+				if sp.Pinned {
+					s.log.Error("pinned model cannot be loaded; it will never be available", "model", id, "err", err)
+				} else {
+					s.log.Warn("preload failed", "model", id, "err", err)
+				}
 				continue
 			}
 			s.log.Info("preload", "model", id, "status", status)
