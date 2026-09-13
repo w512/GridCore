@@ -7,11 +7,11 @@ import (
 	"sort"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/gpu"
-	"github.com/gridcore/gridcore/internal/job"
-	"github.com/gridcore/gridcore/internal/model"
-	"github.com/gridcore/gridcore/internal/residency"
-	"github.com/gridcore/gridcore/internal/runtime"
+	"github.com/w512/gridcore/internal/gpu"
+	"github.com/w512/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/residency"
+	"github.com/w512/gridcore/internal/runtime"
 )
 
 // event is anything the loop reacts to. All mutation happens in handle().

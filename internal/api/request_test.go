@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/config"
-	"github.com/gridcore/gridcore/internal/job"
-	"github.com/gridcore/gridcore/internal/scheduler"
+	"github.com/w512/gridcore/internal/config"
+	"github.com/w512/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/scheduler"
 )
 
 func parseCfg(t *testing.T) *config.Config {

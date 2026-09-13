@@ -1,6 +1,6 @@
 package scheduler
 
-import "github.com/gridcore/gridcore/internal/job"
+import "github.com/w512/gridcore/internal/job"
 
 // queue holds waiting jobs, one FIFO per class. Classes are strictly
 // ordered; there is no cross-class aging.

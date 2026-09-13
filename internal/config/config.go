@@ -18,7 +18,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/gridcore/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/job"
 )
 
 // Runtime types known to the process supervisor.

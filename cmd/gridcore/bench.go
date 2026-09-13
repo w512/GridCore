@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/config"
-	"github.com/gridcore/gridcore/internal/gpu"
-	"github.com/gridcore/gridcore/internal/model"
-	"github.com/gridcore/gridcore/internal/runtime"
-	"github.com/gridcore/gridcore/internal/scheduler"
+	"github.com/w512/gridcore/internal/config"
+	"github.com/w512/gridcore/internal/gpu"
+	"github.com/w512/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/runtime"
+	"github.com/w512/gridcore/internal/scheduler"
 )
 
 // benchResult is one measured model.

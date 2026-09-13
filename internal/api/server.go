@@ -11,10 +11,10 @@ import (
 	"net/http"
 	"sort"
 
-	"github.com/gridcore/gridcore/internal/config"
-	"github.com/gridcore/gridcore/internal/job"
-	"github.com/gridcore/gridcore/internal/metrics"
-	"github.com/gridcore/gridcore/internal/scheduler"
+	"github.com/w512/gridcore/internal/config"
+	"github.com/w512/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/metrics"
+	"github.com/w512/gridcore/internal/scheduler"
 )
 
 // Scheduler is what the API needs from the control plane.

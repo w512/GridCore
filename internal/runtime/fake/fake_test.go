@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	gpufake "github.com/gridcore/gridcore/internal/gpu/fake"
-	"github.com/gridcore/gridcore/internal/model"
-	"github.com/gridcore/gridcore/internal/runtime"
+	gpufake "github.com/w512/gridcore/internal/gpu/fake"
+	"github.com/w512/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/runtime"
 )
 
 func freePort(t *testing.T) int {

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/config"
-	"github.com/gridcore/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/config"
+	"github.com/w512/gridcore/internal/job"
 )
 
 // Request headers understood by GridCore.

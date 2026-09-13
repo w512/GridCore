@@ -6,9 +6,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/job"
-	"github.com/gridcore/gridcore/internal/model"
-	"github.com/gridcore/gridcore/internal/residency"
+	"github.com/w512/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/residency"
 )
 
 // schedule runs one planning pass over the queues. It is called after every

@@ -15,13 +15,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/config"
-	"github.com/gridcore/gridcore/internal/gpu"
-	"github.com/gridcore/gridcore/internal/job"
-	"github.com/gridcore/gridcore/internal/metrics"
-	"github.com/gridcore/gridcore/internal/model"
-	"github.com/gridcore/gridcore/internal/residency"
-	"github.com/gridcore/gridcore/internal/runtime"
+	"github.com/w512/gridcore/internal/config"
+	"github.com/w512/gridcore/internal/gpu"
+	"github.com/w512/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/metrics"
+	"github.com/w512/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/residency"
+	"github.com/w512/gridcore/internal/runtime"
 )
 
 // Options tune the loop. Zero values mean defaults.

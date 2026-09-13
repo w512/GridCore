@@ -62,15 +62,15 @@ Requirements: Linux x86_64, an NVIDIA GPU with a working driver
 
 ```bash
 # 1. GridCore binary
-curl -fsSL https://github.com/gridcore/gridcore/releases/latest/download/gridcore-linux-amd64 \
+curl -fsSL https://github.com/w512/GridCore/releases/latest/download/gridcore-linux-amd64 \
   -o ~/.local/bin/gridcore && chmod +x ~/.local/bin/gridcore
 
 # 2. llama.cpp (prebuilt CUDA release into /opt/llama.cpp/current)
-curl -fsSL https://raw.githubusercontent.com/gridcore/gridcore/main/scripts/install-llamacpp.sh | bash
+curl -fsSL https://raw.githubusercontent.com/w512/GridCore/main/scripts/install-llamacpp.sh | bash
 
 # 3. Config: point it at your models
 mkdir -p ~/.config/gridcore
-curl -fsSL https://raw.githubusercontent.com/gridcore/gridcore/main/config.example.yaml \
+curl -fsSL https://raw.githubusercontent.com/w512/GridCore/main/config.example.yaml \
   -o ~/.config/gridcore/config.yaml
 $EDITOR ~/.config/gridcore/config.yaml        # paths under models:
 

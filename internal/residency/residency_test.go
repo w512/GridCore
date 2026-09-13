@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/job"
-	"github.com/gridcore/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/model"
 )
 
 var t0 = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)

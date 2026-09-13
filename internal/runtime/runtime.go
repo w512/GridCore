@@ -12,7 +12,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/model"
 )
 
 // ErrLoadTimeout is returned by Load when the instance did not become

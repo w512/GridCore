@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/gpu"
+	"github.com/w512/gridcore/internal/gpu"
 )
 
 // Monitor simulates a single dedicated-memory GPU.

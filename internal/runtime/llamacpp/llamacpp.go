@@ -23,9 +23,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/config"
-	"github.com/gridcore/gridcore/internal/model"
-	"github.com/gridcore/gridcore/internal/runtime"
+	"github.com/w512/gridcore/internal/config"
+	"github.com/w512/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/runtime"
 )
 
 // Runtime implements runtime.Runtime for llama.cpp.

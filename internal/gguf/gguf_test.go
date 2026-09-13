@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/gridcore/gridcore/internal/gguf/gguftest"
+	"github.com/w512/gridcore/internal/gguf/gguftest"
 )
 
 func TestParseRoundTrip(t *testing.T) {

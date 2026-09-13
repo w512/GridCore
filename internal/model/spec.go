@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/config"
+	"github.com/w512/gridcore/internal/config"
 )
 
 // Spec is the scheduler's immutable view of a configured model.

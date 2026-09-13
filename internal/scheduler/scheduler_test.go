@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/config"
-	"github.com/gridcore/gridcore/internal/gpu"
-	gpufake "github.com/gridcore/gridcore/internal/gpu/fake"
-	"github.com/gridcore/gridcore/internal/job"
-	"github.com/gridcore/gridcore/internal/runtime"
-	rtfake "github.com/gridcore/gridcore/internal/runtime/fake"
+	"github.com/w512/gridcore/internal/config"
+	"github.com/w512/gridcore/internal/gpu"
+	gpufake "github.com/w512/gridcore/internal/gpu/fake"
+	"github.com/w512/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/runtime"
+	rtfake "github.com/w512/gridcore/internal/runtime/fake"
 )
 
 const (

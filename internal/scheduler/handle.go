@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/job"
 )
 
 // Grant tells the API layer that one step of a job may run now on the given

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gridcore/gridcore/internal/gguf/gguftest"
+	"github.com/w512/gridcore/internal/gguf/gguftest"
 )
 
 // Layouts below mirror the real GGUF headers inspected on the test box; the

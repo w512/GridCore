@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/gridcore/gridcore/internal/gguf"
+	"github.com/w512/gridcore/internal/gguf"
 )
 
 // Estimate is a pre-measurement VRAM prediction with its breakdown, so

@@ -1,4 +1,4 @@
-module github.com/gridcore/gridcore
+module github.com/w512/gridcore
 
 go 1.25.0
 

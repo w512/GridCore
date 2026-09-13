@@ -18,9 +18,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	gpufake "github.com/gridcore/gridcore/internal/gpu/fake"
-	"github.com/gridcore/gridcore/internal/model"
-	"github.com/gridcore/gridcore/internal/runtime"
+	gpufake "github.com/w512/gridcore/internal/gpu/fake"
+	"github.com/w512/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/runtime"
 )
 
 var nextPID atomic.Int64

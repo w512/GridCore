@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/job"
-	"github.com/gridcore/gridcore/internal/scheduler"
+	"github.com/w512/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/scheduler"
 )
 
 // keepaliveAfter is how long a streaming request may sit in the queue before

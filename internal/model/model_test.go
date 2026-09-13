@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/config"
+	"github.com/w512/gridcore/internal/config"
 )
 
 func TestFromConfig(t *testing.T) {

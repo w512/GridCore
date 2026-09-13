@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/job"
 )
 
 const minimal = `

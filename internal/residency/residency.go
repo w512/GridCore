@@ -18,9 +18,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/job"
-	"github.com/gridcore/gridcore/internal/model"
-	"github.com/gridcore/gridcore/internal/runtime"
+	"github.com/w512/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/runtime"
 )
 
 // State is the lifecycle of a resident entry.

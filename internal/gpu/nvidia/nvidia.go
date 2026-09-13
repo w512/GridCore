@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gridcore/gridcore/internal/gpu"
+	"github.com/w512/gridcore/internal/gpu"
 )
 
 const (
