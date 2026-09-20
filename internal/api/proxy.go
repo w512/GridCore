@@ -142,6 +142,11 @@ func (s *Server) single(w http.ResponseWriter, r *http.Request, req *inferenceRe
 	}
 	if !committed {
 		w.Header().Set(HeaderQueueMS, strconv.FormatInt(g.Queued.Milliseconds(), 10))
+	} else {
+		// Headers are gone (SSE keep-alive started); report the wait as a
+		// comment so streaming clients can still show it.
+		_, _ = fmt.Fprintf(w, ": gridcore queue_ms=%d model=%s\n\n", g.Queued.Milliseconds(), g.Model)
+		_ = http.NewResponseController(w).Flush()
 	}
 	res := s.proxy.forward(r.Context(), w, committed, g.Addr, r.URL.Path, req.marshalBody(), req.stream)
 	h.StepDone(g.Step, res.err, res.usage)
