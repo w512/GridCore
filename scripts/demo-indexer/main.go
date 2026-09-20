@@ -222,11 +222,13 @@ func runPass(ctx context.Context, client *http.Client, cfg passConfig, pass int)
 		}
 		done++
 		docsDone = hi
-		draw("running", 0)
 		if lastQueue > 500 {
-			// Leave a trace of the pause in the scrollback.
-			fmt.Printf("\n%s   step %d waited %s while interactive work ran%s\n", dim, done, fmtDur(q), reset)
+			// Leave a trace of the pause: it replaces the bar's line, and the
+			// bar continues on the line below, so the screen reads as a log
+			// of pauses with a single live bar at the bottom.
+			fmt.Printf("\r%s   step %d waited %s while interactive work ran%s%sK\n", dim, done, fmtDur(q), reset, esc)
 		}
+		draw("running", 0)
 		// Pacing: -rate caps documents per second; -pause adds a fixed gap.
 		wait := pause
 		if cfg.rate > 0 {
