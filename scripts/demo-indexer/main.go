@@ -18,7 +18,9 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 )
 
 const (
@@ -74,11 +76,11 @@ func main() {
 	cfg := passConfig{addr: *addr, kind: *kind, model: *model, class: *class, docs: *docs, chunk: *chunk,
 		docWords: *docWords, rate: *rate, pause: *pause}
 
-	what := "embedding"
+	what := "embed"
 	if *kind == "chat" {
-		what = "classifying"
+		what = "classify"
 	}
-	fmt.Printf("%sindexer%s  %s %d docs (~%d words each) with %s  class=%s  steps of %d\n\n", bold, reset, what, *docs, *docWords, *model, *class, *chunk)
+	fmt.Printf("%sindexer%s  %s %d docs · %s · %s\n\n", bold, reset, what, *docs, *model, *class)
 	pass := 1
 	for {
 		if err := runPass(ctx, client, cfg, pass); err != nil {
@@ -113,26 +115,39 @@ func runPass(ctx context.Context, client *http.Client, cfg passConfig, pass int)
 	var docsDone int
 	var lastQueue int64
 
+	// typicalStep is an EMA of how long a step takes when it is not queued;
+	// "waiting" is shown only when the current step runs well past it, so
+	// slow models do not flicker between running and waiting.
+	var typicalStep time.Duration
+
 	draw := func(state string, waiting time.Duration) {
 		pct := float64(docsDone) / float64(docs)
-		width := 34
-		filled := int(pct * float64(width))
-		bar := green + strings.Repeat("▇", filled) + dim + strings.Repeat("░", width-filled) + reset
 		elapsed := time.Since(start)
 		rate := 0.0 // wall-clock, so scheduler pauses visibly pull it down
 		if elapsed > 0 {
 			rate = float64(docsDone) / elapsed.Seconds()
 		}
-		line := fmt.Sprintf("\r%s %3.0f%%  chunk %*d/%d  %5.0f docs/s  %s", bar, pct*100, len(strconv.Itoa(total)), done, total, rate, fmtDur(elapsed))
+		var status string
 		switch state {
 		case "running":
-			line += fmt.Sprintf("  %s▶ running%s   ", green, reset)
+			status = fmt.Sprintf("%s▶ running%s", green, reset)
 		case "waiting":
-			line += fmt.Sprintf("  %s⏸ waiting for GPU %s%s", yellow, fmtDur(waiting), reset)
+			status = fmt.Sprintf("%s⏸ waiting for GPU %s%s", yellow, fmtDur(waiting), reset)
 		case "done":
-			line += fmt.Sprintf("  %s✓ done%s  (paused %s total)", cyan, reset, fmtDur(pausedTotal))
+			status = fmt.Sprintf("%s✓ done%s (paused %s)", cyan, reset, fmtDur(pausedTotal))
 		}
-		fmt.Print(line + esc + "K")
+		// Everything after the bar; sized so the whole line fits the terminal
+		// (a wrapped line cannot be redrawn in place and scrolls instead).
+		cols := termWidth()
+		tail := fmt.Sprintf(" %3.0f%%  %*d/%d  %4.0f docs/s  %6s  %s", pct*100, len(strconv.Itoa(total)), done, total, rate, fmtDur(elapsed), status)
+		if cols < 70 {
+			tail = fmt.Sprintf(" %3.0f%%  %*d/%d  %s", pct*100, len(strconv.Itoa(total)), done, total, status)
+		}
+		width := cols - visibleLen(tail) - 2
+		width = max(8, min(width, 40))
+		filled := int(pct * float64(width))
+		bar := green + strings.Repeat("▇", filled) + dim + strings.Repeat("░", width-filled) + reset
+		fmt.Print("\r" + bar + tail + esc + "K")
 	}
 
 	for done < total {
@@ -179,9 +194,10 @@ func runPass(ctx context.Context, client *http.Client, cfg passConfig, pass int)
 			case res = <-resCh:
 				break wait
 			case <-tick.C:
-				// Anything beyond a normal chunk (~250 ms) means we are queued.
-				if w := time.Since(reqStart); w > 400*time.Millisecond {
-					draw("waiting", w)
+				// Queued if this step already runs well past a typical one.
+				threshold := max(400*time.Millisecond, typicalStep*5/2)
+				if w := time.Since(reqStart); w > threshold {
+					draw("waiting", w-typicalStep)
 				} else {
 					draw("running", 0)
 				}
@@ -197,13 +213,19 @@ func runPass(ctx context.Context, client *http.Client, cfg passConfig, pass int)
 		lastQueue = res.queue
 		q := time.Duration(res.queue) * time.Millisecond
 		pausedTotal += q
-		indexed += res.dur - q
+		work := res.dur - q
+		indexed += work
+		if typicalStep == 0 {
+			typicalStep = work
+		} else {
+			typicalStep = (typicalStep*3 + work) / 4
+		}
 		done++
 		docsDone = hi
 		draw("running", 0)
 		if lastQueue > 500 {
 			// Leave a trace of the pause in the scrollback.
-			fmt.Printf("\n%s   chunk %d waited %s while interactive work ran%s\n", dim, done, fmtDur(q), reset)
+			fmt.Printf("\n%s   step %d waited %s while interactive work ran%s\n", dim, done, fmtDur(q), reset)
 		}
 		// Pacing: -rate caps documents per second; -pause adds a fixed gap.
 		wait := pause
@@ -301,6 +323,35 @@ func firstModelWith(addr, cap string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no model with capability %q configured", cap)
+}
+
+// termWidth returns the terminal width, or 100 when unknown.
+func termWidth() int {
+	var ws struct{ Row, Col, X, Y uint16 }
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, os.Stdout.Fd(), uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws)))
+	if errno != 0 || ws.Col == 0 {
+		return 100
+	}
+	return int(ws.Col)
+}
+
+// visibleLen counts printable columns, ignoring ANSI escapes.
+func visibleLen(s string) int {
+	n := 0
+	inEsc := false
+	for _, r := range s {
+		switch {
+		case inEsc:
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEsc = false
+			}
+		case r == 0x1b:
+			inEsc = true
+		default:
+			n++
+		}
+	}
+	return n
 }
 
 func fmtDur(d time.Duration) string {
