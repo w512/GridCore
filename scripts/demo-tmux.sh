@@ -12,6 +12,7 @@
 #   scripts/demo-tmux.sh                 # against a running gridcore at 127.0.0.1:8080
 #   GRIDCORE_ADDR=host:port scripts/demo-tmux.sh
 #   scripts/demo-tmux.sh --fake          # also start gridcore on examples/fake-demo.yaml
+#   INDEXER_ARGS="-model tiny -kind chat -loop" scripts/demo-tmux.sh
 #
 # The chat pane waits for you to type; the indexer pane has the command
 # typed but not started, so you control when the background load begins.
@@ -59,7 +60,11 @@ IDX=$(tmux split-window -v -t "$CHAT" -l 35% -P -F '#{pane_id}')      # right-bo
 
 tmux send-keys -t "$DASH" "bin/gridcore status --watch --addr $ADDR" C-m
 tmux send-keys -t "$CHAT" "clear; bin/gc-chat -addr $ADDR" C-m
-tmux send-keys -t "$IDX"  "clear; bin/gc-indexer -addr $ADDR -docs 3000 -loop"   # typed, not run
+# Background load: an LLM classifying documents with the smallest chat model
+# (8-15 docs/s on real hardware). Override with INDEXER_ARGS, e.g.
+# INDEXER_ARGS="-rate 20 -loop" for embeddings at a fixed pace.
+INDEXER_ARGS="${INDEXER_ARGS:--kind chat -docs 3000 -loop}"
+tmux send-keys -t "$IDX"  "clear; bin/gc-indexer -addr $ADDR $INDEXER_ARGS"   # typed, not run
 tmux send-keys -t "$BOT"  "$BOTTOM" C-m
 tmux select-pane -t "$CHAT"
 tmux set -t "$SESSION" status off
