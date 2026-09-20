@@ -53,9 +53,9 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 tmux new-session -d -s "$SESSION" -x 200 -y 50 -e GRIDCORE_ADDR="$ADDR"
 # Pane ids (%N) are stable regardless of layout position.
 DASH=$(tmux display-message -t "$SESSION" -p '#{pane_id}')
-BOT=$(tmux split-window -v -t "$DASH" -p 25 -P -F '#{pane_id}')      # full-width bottom
-CHAT=$(tmux split-window -h -t "$DASH" -p 42 -P -F '#{pane_id}')     # right column
-IDX=$(tmux split-window -v -t "$CHAT" -p 35 -P -F '#{pane_id}')      # right-bottom
+BOT=$(tmux split-window -v -t "$DASH" -l 25% -P -F '#{pane_id}')      # full-width bottom
+CHAT=$(tmux split-window -h -t "$DASH" -l 42% -P -F '#{pane_id}')     # right column
+IDX=$(tmux split-window -v -t "$CHAT" -l 35% -P -F '#{pane_id}')      # right-bottom
 
 tmux send-keys -t "$DASH" "bin/gridcore status --watch --addr $ADDR" C-m
 tmux send-keys -t "$CHAT" "clear; bin/gc-chat -addr $ADDR" C-m
