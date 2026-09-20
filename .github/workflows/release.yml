@@ -18,8 +18,8 @@ jobs:
           - { goos: darwin, goarch: arm64 }
           - { goos: darwin, goarch: amd64 }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: build
@@ -31,7 +31,7 @@ jobs:
           out=gridcore-${GOOS}-${GOARCH}
           go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o "$out" ./cmd/gridcore
           sha256sum "$out" > "$out.sha256"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: gridcore-${{ matrix.goos }}-${{ matrix.goarch }}
           path: gridcore-*
@@ -40,8 +40,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -51,7 +51,7 @@ jobs:
             /^## /{ if (found) exit; if ($2==tag || $2=="Unreleased") found=1; next }
             found' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "Release ${GITHUB_REF_NAME}" > notes.md
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           body_path: notes.md
