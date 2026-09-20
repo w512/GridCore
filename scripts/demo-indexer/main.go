@@ -34,19 +34,36 @@ const (
 
 func main() {
 	addr := flag.String("addr", envOr("GRIDCORE_ADDR", "127.0.0.1:8080"), "gridcore address")
-	model := flag.String("model", "", "embedding model (default: first configured)")
+	kind := flag.String("kind", "embed", "embed: embed documents in chunks; chat: classify each document with a chat model")
+	model := flag.String("model", "", "model (default: first configured embedding or chat model)")
 	docs := flag.Int("docs", 3000, "documents per pass")
-	chunk := flag.Int("chunk", 32, "documents per request")
+	chunk := flag.Int("chunk", 0, "documents per progress step (default 32 for embed, 4 for chat)")
+	docWords := flag.Int("doc-words", 300, "words per synthetic document; must fit the embedding model's per-slot context (nomic: ctx/parallel = 512 tokens, so keep it under ~350)")
+	rate := flag.Float64("rate", 0, "cap throughput at N documents/s (0 = as fast as the GPU allows)")
 	loop := flag.Bool("loop", false, "start over when a pass completes")
 	class := flag.String("class", "background", "workload class")
-	pause := flag.Duration("pause", 0, "extra pause between chunks (to slow the demo down)")
+	pause := flag.Duration("pause", 0, "extra pause between steps")
 	flag.Parse()
+	if *kind != "embed" && *kind != "chat" {
+		fmt.Fprintln(os.Stderr, "demo-indexer: -kind must be embed or chat")
+		os.Exit(2)
+	}
+	if *chunk == 0 {
+		*chunk = 32
+		if *kind == "chat" {
+			*chunk = 4
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
 	if *model == "" {
-		m, err := firstModelWith(*addr, "embedding")
+		cap := "embedding"
+		if *kind == "chat" {
+			cap = "chat"
+		}
+		m, err := firstModelWith(*addr, cap)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "demo-indexer:", err)
 			os.Exit(1)
@@ -54,11 +71,17 @@ func main() {
 		*model = m
 	}
 	client := &http.Client{}
+	cfg := passConfig{addr: *addr, kind: *kind, model: *model, class: *class, docs: *docs, chunk: *chunk,
+		docWords: *docWords, rate: *rate, pause: *pause}
 
-	fmt.Printf("%sindexer%s  model=%s  class=%s  %d docs in chunks of %d\n\n", bold, reset, *model, *class, *docs, *chunk)
+	what := "embedding"
+	if *kind == "chat" {
+		what = "classifying"
+	}
+	fmt.Printf("%sindexer%s  %s %d docs (~%d words each) with %s  class=%s  steps of %d\n\n", bold, reset, what, *docs, *docWords, *model, *class, *chunk)
 	pass := 1
 	for {
-		if err := runPass(ctx, client, *addr, *model, *class, *docs, *chunk, *pause, pass); err != nil {
+		if err := runPass(ctx, client, cfg, pass); err != nil {
 			if ctx.Err() != nil {
 				fmt.Printf("\n%sstopped%s\n", dim, reset)
 				return
@@ -74,7 +97,15 @@ func main() {
 	}
 }
 
-func runPass(ctx context.Context, client *http.Client, addr, model, class string, docs, chunk int, pause time.Duration, pass int) error {
+type passConfig struct {
+	addr, kind, model, class string
+	docs, chunk, docWords    int
+	rate                     float64
+	pause                    time.Duration
+}
+
+func runPass(ctx context.Context, client *http.Client, cfg passConfig, pass int) error {
+	docs, chunk, addr, model, class, pause := cfg.docs, cfg.chunk, cfg.addr, cfg.model, cfg.class, cfg.pause
 	total := (docs + chunk - 1) / chunk
 	start := time.Now()
 	var indexed, pausedTotal time.Duration
@@ -88,9 +119,9 @@ func runPass(ctx context.Context, client *http.Client, addr, model, class string
 		filled := int(pct * float64(width))
 		bar := green + strings.Repeat("▇", filled) + dim + strings.Repeat("░", width-filled) + reset
 		elapsed := time.Since(start)
-		rate := 0.0
-		if indexed > 0 {
-			rate = float64(docsDone) / indexed.Seconds()
+		rate := 0.0 // wall-clock, so scheduler pauses visibly pull it down
+		if elapsed > 0 {
+			rate = float64(docsDone) / elapsed.Seconds()
 		}
 		line := fmt.Sprintf("\r%s %3.0f%%  chunk %*d/%d  %5.0f docs/s  %s", bar, pct*100, len(strconv.Itoa(total)), done, total, rate, fmtDur(elapsed))
 		switch state {
@@ -107,9 +138,9 @@ func runPass(ctx context.Context, client *http.Client, addr, model, class string
 	for done < total {
 		lo := done * chunk
 		hi := min(lo+chunk, docs)
-		body, _ := json.Marshal(map[string]any{"model": model, "input": makeDocs(pass, lo, hi)})
+		batch := makeDocs(pass, lo, hi, cfg.docWords)
 
-		// Fire the request and animate while it is queued.
+		// Fire the step and animate while it is queued.
 		type result struct {
 			queue int64
 			dur   time.Duration
@@ -118,22 +149,26 @@ func runPass(ctx context.Context, client *http.Client, addr, model, class string
 		resCh := make(chan result, 1)
 		reqStart := time.Now()
 		go func() {
-			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+"/v1/embeddings", bytes.NewReader(body))
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("X-GridCore-Class", class)
-			resp, err := client.Do(req)
-			if err != nil {
-				resCh <- result{err: err}
-				return
+			var q int64
+			var err error
+			if cfg.kind == "chat" {
+				// One classification request per document; queue time is the
+				// sum of what each request waited.
+				for _, doc := range batch {
+					var qq int64
+					qq, err = post(ctx, client, addr, "/v1/chat/completions", class, map[string]any{
+						"model": model, "max_tokens": 6, "temperature": 0,
+						"messages": []map[string]string{{"role": "user", "content": "Classify this note with one word (topic). Note:\n\n" + doc}},
+					})
+					q += qq
+					if err != nil {
+						break
+					}
+				}
+			} else {
+				q, err = post(ctx, client, addr, "/v1/embeddings", class, map[string]any{"model": model, "input": batch})
 			}
-			defer resp.Body.Close()
-			raw, _ := io.ReadAll(resp.Body)
-			if resp.StatusCode != 200 {
-				resCh <- result{err: fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(raw))}
-				return
-			}
-			q, _ := strconv.ParseInt(resp.Header.Get("X-GridCore-Queue-Ms"), 10, 64)
-			resCh <- result{queue: q, dur: time.Since(reqStart)}
+			resCh <- result{queue: q, dur: time.Since(reqStart), err: err}
 		}()
 
 		tick := time.NewTicker(100 * time.Millisecond)
@@ -170,9 +205,17 @@ func runPass(ctx context.Context, client *http.Client, addr, model, class string
 			// Leave a trace of the pause in the scrollback.
 			fmt.Printf("\n%s   chunk %d waited %s while interactive work ran%s\n", dim, done, fmtDur(q), reset)
 		}
-		if pause > 0 {
+		// Pacing: -rate caps documents per second; -pause adds a fixed gap.
+		wait := pause
+		if cfg.rate > 0 {
+			target := time.Duration(float64(docsDone) / cfg.rate * float64(time.Second))
+			if ahead := target - (time.Since(start) - pausedTotal); ahead > wait {
+				wait = ahead
+			}
+		}
+		if wait > 0 {
 			select {
-			case <-time.After(pause):
+			case <-time.After(wait):
 			case <-ctx.Done():
 				return ctx.Err()
 			}
@@ -183,10 +226,50 @@ func runPass(ctx context.Context, client *http.Client, addr, model, class string
 	return nil
 }
 
-func makeDocs(pass, lo, hi int) []string {
+// post sends one request and returns its queue time.
+func post(ctx context.Context, client *http.Client, addr, path, class string, payload any) (int64, error) {
+	body, _ := json.Marshal(payload)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GridCore-Class", class)
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return 0, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(raw))
+	}
+	q, _ := strconv.ParseInt(resp.Header.Get("X-GridCore-Queue-Ms"), 10, 64)
+	return q, nil
+}
+
+// vocabulary for synthetic documents; varied enough that prompt caching
+// does not make later chunks artificially fast.
+var words = strings.Fields(`scheduler gpu memory residency priority queue interactive background batch
+model weights context cache eviction latency throughput tokens embedding vector index document paragraph
+policy budget headroom reservation slot runtime process health metrics dashboard timeline event
+release load unload pinned hot cold tier admission estimate measured profile driver kernel buffer
+stream request response client server proxy header class deadline timeout retry breaker crash recover
+notes meeting project quarterly review draft summary decision action owner date status risk plan`)
+
+func makeDocs(pass, lo, hi, nWords int) []string {
 	out := make([]string, 0, hi-lo)
 	for i := lo; i < hi; i++ {
-		out = append(out, fmt.Sprintf("Pass %d, document %d: notes on GPU memory residency, priority queues and local inference workloads.", pass, i))
+		seed := uint32(pass*1_000_003 + i*7919)
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Document %d (pass %d). ", i, pass)
+		for w := 0; w < nWords; w++ {
+			seed = seed*1664525 + 1013904223 // LCG; deterministic per document
+			sb.WriteString(words[int(seed>>8)%len(words)])
+			if w%13 == 12 {
+				sb.WriteString(". ")
+			} else {
+				sb.WriteByte(' ')
+			}
+		}
+		out = append(out, sb.String())
 	}
 	return out
 }
