@@ -343,3 +343,23 @@ func TestRegistryReapsOrphans(t *testing.T) {
 		t.Errorf("stopped instance must not be in the registry, got %+v", got)
 	}
 }
+
+func TestLooksLikeOurs(t *testing.T) {
+	e := RegistryEntry{Binary: "/opt/llama.cpp/current/llama-server", Port: 41003}
+	cases := []struct {
+		argv []string
+		want bool
+	}{
+		{[]string{"/opt/llama.cpp/current/llama-server", "--model", "m.gguf", "--port", "41003"}, true},
+		{[]string{"/opt/llama.cpp/llama-b11060/llama-server", "--port=41003"}, true},   // symlink resolved by the kernel
+		{[]string{"/usr/bin/python3", "/tmp/x/llama-server", "--port", "41003"}, true}, // interpreter + script
+		{[]string{"/opt/llama.cpp/current/llama-server", "--port", "41004"}, false},    // other port
+		{[]string{"/usr/bin/firefox", "--port", "41003"}, false},                       // reused pid
+		{nil, false},
+	}
+	for _, c := range cases {
+		if got := looksLikeOurs(c.argv, e); got != c.want {
+			t.Errorf("looksLikeOurs(%v) = %v, want %v", c.argv, got, c.want)
+		}
+	}
+}

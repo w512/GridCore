@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -50,8 +52,14 @@ func OpenRegistry(path string) (*Registry, error) {
 }
 
 // ReapOrphans kills every recorded process that is still alive and looks
-// like one of ours (same binary path in /proc/<pid>/exe when readable). It
-// returns the entries it acted on and clears the registry.
+// like one of ours. It returns the entries it acted on and clears the
+// registry.
+//
+// PID reuse is guarded by inspecting the process command line when the OS
+// exposes it: a llama-server we started has our binary path and its port
+// in argv. /proc/<pid>/exe is deliberately not used: for a script (or a
+// wrapper) it points at the interpreter, which would make us skip and leak
+// the very process we are trying to reap.
 func (r *Registry) ReapOrphans() []RegistryEntry {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -60,8 +68,9 @@ func (r *Registry) ReapOrphans() []RegistryEntry {
 		if !alive(pid) {
 			continue
 		}
-		if exe, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid)); err == nil {
-			if real, err := filepath.EvalSymlinks(e.Binary); err == nil && exe != real && exe != e.Binary {
+		if cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil && len(cmdline) > 0 {
+			argv := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
+			if !looksLikeOurs(argv, e) {
 				continue // PID was reused by something else
 			}
 		}
@@ -131,6 +140,24 @@ func (r *Registry) saveLocked() error {
 		return err
 	}
 	return os.Rename(tmp, r.path)
+}
+
+// looksLikeOurs reports whether argv is the llama-server we recorded: it
+// mentions the binary (by path or base name, for scripts run through an
+// interpreter) and listens on the recorded port.
+func looksLikeOurs(argv []string, e RegistryEntry) bool {
+	hasBinary, hasPort := false, false
+	base := filepath.Base(e.Binary)
+	port := strconv.Itoa(e.Port)
+	for i, a := range argv {
+		if a == e.Binary || filepath.Base(a) == base {
+			hasBinary = true
+		}
+		if (a == "--port" && i+1 < len(argv) && argv[i+1] == port) || a == "--port="+port {
+			hasPort = true
+		}
+	}
+	return hasBinary && hasPort
 }
 
 func alive(pid int) bool {
