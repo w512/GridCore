@@ -35,7 +35,7 @@ func main() {
 	addr := flag.String("addr", envOr("GRIDCORE_ADDR", "127.0.0.1:8080"), "gridcore address")
 	model := flag.String("model", "gpt-4o", "model id or alias")
 	class := flag.String("class", "interactive", "workload class")
-	maxTokens := flag.Int("max-tokens", 200, "max_tokens")
+	maxTokens := flag.Int("max-tokens", 1024, "max_tokens per answer (0 = let the model stop on its own)")
 	oneShot := flag.String("m", "", "send this message and exit")
 	system := flag.String("system", "", "optional system prompt")
 	flag.Parse()
@@ -82,9 +82,11 @@ func main() {
 // stream sends the request and prints tokens as they arrive; returns the
 // full assistant text.
 func stream(ctx context.Context, addr, model, class string, maxTokens int, messages []map[string]string) (string, error) {
-	body, _ := json.Marshal(map[string]any{
-		"model": model, "messages": messages, "stream": true, "max_tokens": maxTokens,
-	})
+	payload := map[string]any{"model": model, "messages": messages, "stream": true}
+	if maxTokens > 0 {
+		payload["max_tokens"] = maxTokens
+	}
+	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return "", err
@@ -111,6 +113,7 @@ func stream(ctx context.Context, addr, model, class string, maxTokens int, messa
 	var firstToken time.Time
 	var tokens int
 	var genTPS float64
+	var finish string
 	rd := bufio.NewReader(resp.Body)
 	for {
 		line, err := rd.ReadString('\n')
@@ -138,7 +141,8 @@ func stream(ctx context.Context, addr, model, class string, maxTokens int, messa
 				}
 				var ev struct {
 					Choices []struct {
-						Delta struct {
+						FinishReason string `json:"finish_reason"`
+						Delta        struct {
 							Content          string `json:"content"`
 							ReasoningContent string `json:"reasoning_content"`
 						} `json:"delta"`
@@ -158,6 +162,9 @@ func stream(ctx context.Context, addr, model, class string, maxTokens int, messa
 						genTPS = ev.Timings.PredictedPerSecond
 					}
 					for _, c := range ev.Choices {
+						if c.FinishReason != "" {
+							finish = c.FinishReason
+						}
 						if c.Delta.ReasoningContent != "" && tokens == 0 && firstToken.IsZero() {
 							fmt.Print(dim + "…thinking" + reset + " ")
 							firstToken = time.Now()
@@ -190,7 +197,11 @@ func stream(ctx context.Context, addr, model, class string, maxTokens int, messa
 	if genTPS > 0 {
 		footer += fmt.Sprintf(" · %.0f tok/s", genTPS)
 	}
-	fmt.Printf("\n%s   [%s]%s\n\n", dim, footer, reset)
+	fmt.Printf("\n%s   [%s]%s\n", dim, footer, reset)
+	if finish == "length" {
+		fmt.Printf("%s   ⚠ answer cut off at max_tokens=%d (finish_reason=length); raise -max-tokens%s\n", "\033[33m", maxTokens, reset)
+	}
+	fmt.Println()
 	return sb.String(), nil
 }
 
