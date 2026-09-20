@@ -35,7 +35,7 @@ func main() {
 	addr := flag.String("addr", envOr("GRIDCORE_ADDR", "127.0.0.1:8080"), "gridcore address")
 	model := flag.String("model", "gpt-4o", "model id or alias")
 	class := flag.String("class", "interactive", "workload class")
-	maxTokens := flag.Int("max-tokens", 1024, "max_tokens per answer (0 = let the model stop on its own)")
+	maxTokens := flag.Int("max-tokens", 0, "cap the answer length; 0 (default) lets the model stop on its own")
 	oneShot := flag.String("m", "", "send this message and exit")
 	system := flag.String("system", "", "optional system prompt")
 	flag.Parse()
@@ -199,7 +199,11 @@ func stream(ctx context.Context, addr, model, class string, maxTokens int, messa
 	}
 	fmt.Printf("\n%s   [%s]%s\n", dim, footer, reset)
 	if finish == "length" {
-		fmt.Printf("%s   ⚠ answer cut off at max_tokens=%d (finish_reason=length); raise -max-tokens%s\n", "\033[33m", maxTokens, reset)
+		if maxTokens > 0 {
+			fmt.Printf("%s   ⚠ answer cut off at -max-tokens %d%s\n", "\033[33m", maxTokens, reset)
+		} else {
+			fmt.Printf("%s   ⚠ answer cut off: the model's context slot is full%s\n", "\033[33m", reset)
+		}
 	}
 	fmt.Println()
 	return sb.String(), nil
