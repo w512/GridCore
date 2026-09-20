@@ -7,12 +7,17 @@ LDFLAGS  := -s -w -X main.version=$(VERSION)
 HOST     ?= gpu-box
 REMOTE   ?= ~/gridcore
 
-.PHONY: all build linux test vet lint run deploy install-service clean
+.PHONY: all build tools linux test vet lint run deploy install-service clean
 
 all: vet test build
 
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/gridcore
+
+# Demo clients: streaming chat and background indexer with a progress bar.
+tools:
+	CGO_ENABLED=0 go build -trimpath -o bin/gc-chat ./scripts/chat
+	CGO_ENABLED=0 go build -trimpath -o bin/gc-indexer ./scripts/demo-indexer
 
 linux:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN)-linux-amd64 ./cmd/gridcore

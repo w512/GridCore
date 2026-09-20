@@ -203,7 +203,16 @@ Now qwen3-14b is hot. A background request for gemma4-12b must NOT evict it: it 
    11:20:38.434 timeout   max_wait exceeded while queued
 ```
 
-`gridcore status`:
+To watch it live, `scripts/demo-tmux.sh` opens a tmux layout with the
+dashboard, a streaming chat client and a background indexer whose progress
+bar visibly pauses while a chat runs (`--fake` starts the simulated GPU
+first, so it works on any laptop):
+
+```
+scripts/demo-tmux.sh --fake
+```
+
+`gridcore status --watch`:
 
 ```
 11:08:12  mode=idle
@@ -231,6 +240,7 @@ informed the defaults in [`config.example.yaml`](config.example.yaml).
 | `gridcore models [--explain]` | list models with VRAM estimates |
 | `gridcore bench [--all] <model>` | load, measure VRAM / load time / tokens/s, store the profile |
 | `gridcore status [--watch]` | live view of GPU, queues, resident models, events |
+| `make tools` | build `bin/gc-chat` (streaming chat) and `bin/gc-indexer` (background load with progress bar) |
 
 HTTP: `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`,
 `/v1/models`, `/health`, `/metrics`, `/admin/state`,
