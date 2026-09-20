@@ -119,7 +119,13 @@ func renderState(st scheduler.State, p palette, maxEvents int) string {
 	g := st.GPU
 	if g.TotalMB > 0 {
 		used := g.CommittedMB
-		w("%s%-27s%s %s %s / %s GB", p.bold, trunc(g.Name, 27), p.reset, gaugeBar(used, g.BudgetMB, 30, p), gb(used), gb(g.BudgetMB))
+		pressure := false
+		for _, j := range st.Queued {
+			if strings.Contains(j.Reason, "VRAM") || strings.Contains(j.Reason, "evict") {
+				pressure = true
+			}
+		}
+		w("%s%-27s%s %s %s / %s GB", p.bold, trunc(g.Name, 27), p.reset, gaugeBar(used, g.BudgetMB, 30, pressure, p), gb(used), gb(g.BudgetMB))
 		if g.UtilPct >= 0 {
 			w("  util %3d%%", g.UtilPct)
 		}
@@ -213,19 +219,18 @@ func stepsStr(j scheduler.JobState, p palette) string {
 	return fmt.Sprintf("%s▶%s step %d/%d", p.green, p.reset, j.Completed+1, j.Steps)
 }
 
-// gaugeBar is the GPU gauge: green under 70%, yellow under 90%, red above.
-func gaugeBar(used, total, width int, p palette) string {
+// gaugeBar is the GPU gauge. A full card is what a residency scheduler
+// aims for, so fullness alone is not alarming: the bar turns red only when
+// something is queued waiting for VRAM.
+func gaugeBar(used, total, width int, pressure bool, p palette) string {
 	if total <= 0 {
 		return "[" + strings.Repeat("·", width) + "]"
 	}
 	filled := used * width / total
 	filled = max(0, min(filled, width))
-	col := p.green
-	switch pct := used * 100 / total; {
-	case pct >= 90:
+	col := p.cyan
+	if pressure {
 		col = p.red
-	case pct >= 70:
-		col = p.yellow
 	}
 	return "[" + col + strings.Repeat("█", filled) + p.reset + p.dim + strings.Repeat("·", width-filled) + p.reset + "]"
 }

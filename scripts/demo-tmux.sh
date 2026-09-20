@@ -6,7 +6,7 @@
 #   │   --watch            ├──────────────────┤
 #   │                      │ indexer          │
 #   ├──────────────────────┴──────────────────┤
-#   │ nvtop / nvidia-smi (or gridcore log)    │
+#   │ gpu-watch (nvidia-smi + model names)    │
 #   └─────────────────────────────────────────┘
 #
 #   scripts/demo-tmux.sh                 # against a running gridcore at 127.0.0.1:8080
@@ -39,11 +39,13 @@ if [[ $FAKE == 1 ]]; then
 fi
 curl -sf "http://$ADDR/health" >/dev/null || { echo "gridcore is not answering at $ADDR" >&2; exit 1; }
 
-# Bottom pane: nvtop if present, else nvidia-smi loop, else the daemon log.
-if command -v nvtop >/dev/null; then
-  BOTTOM="nvtop"
+# Bottom pane: ground truth from nvidia-smi with per-process model names
+# (scripts/gpu-watch.sh); BOTTOM=nvtop to use nvtop instead; the daemon log
+# when there is no GPU.
+if [[ -n "${BOTTOM:-}" ]]; then
+  :
 elif command -v nvidia-smi >/dev/null; then
-  BOTTOM="watch -n1 -t 'nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader; echo; nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader'"
+  BOTTOM="scripts/gpu-watch.sh"
 elif [[ $FAKE == 1 ]]; then
   BOTTOM="tail -f /tmp/gridcore-demo.log"
 else
@@ -54,9 +56,10 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 tmux new-session -d -s "$SESSION" -x 200 -y 50 -e GRIDCORE_ADDR="$ADDR"
 # Pane ids (%N) are stable regardless of layout position.
 DASH=$(tmux display-message -t "$SESSION" -p '#{pane_id}')
-BOT=$(tmux split-window -v -t "$DASH" -l 25% -P -F '#{pane_id}')      # full-width bottom
+BOT=$(tmux split-window -v -t "$DASH" -l 35% -P -F '#{pane_id}')      # full-width bottom
 CHAT=$(tmux split-window -h -t "$DASH" -l 42% -P -F '#{pane_id}')     # right column
-IDX=$(tmux split-window -v -t "$CHAT" -l 35% -P -F '#{pane_id}')      # right-bottom
+IDX=$(tmux split-window -v -t "$CHAT" -l 40% -P -F '#{pane_id}')      # right-bottom
+sleep 0.5   # let the shells draw their prompts before we type into them
 
 tmux send-keys -t "$DASH" "bin/gridcore status --watch --addr $ADDR" C-m
 tmux send-keys -t "$CHAT" "clear; bin/gc-chat -addr $ADDR" C-m
