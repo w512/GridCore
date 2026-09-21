@@ -63,7 +63,11 @@ func main() {
 		ask(*oneShot)
 		return
 	}
-	fmt.Printf("%schat%s  model=%s  class=%s  (Ctrl-D to quit)\n\n", bold, reset, *model, *class)
+	shown := *model
+	if root := resolveAlias(*addr, *model); root != "" && root != *model {
+		shown = fmt.Sprintf("%s %s(alias for %s)%s", *model, dim, root, reset)
+	}
+	fmt.Printf("%schat%s  model=%s  class=%s  (Ctrl-D to quit)\n\n", bold, reset, shown, *class)
 	sc := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Printf("%syou>%s ", bold, reset)
@@ -207,6 +211,34 @@ func stream(ctx context.Context, addr, model, class string, maxTokens int, messa
 	}
 	fmt.Println()
 	return sb.String(), nil
+}
+
+// resolveAlias asks GridCore what a model name points at; "" if unknown.
+func resolveAlias(addr, name string) string {
+	c := &http.Client{Timeout: 2 * time.Second}
+	resp, err := c.Get("http://" + addr + "/v1/models")
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Root string `json:"root"`
+		} `json:"data"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&out) != nil {
+		return ""
+	}
+	for _, m := range out.Data {
+		if m.ID == name {
+			if m.Root != "" {
+				return m.Root
+			}
+			return m.ID
+		}
+	}
+	return ""
 }
 
 func errorMessage(raw []byte) string {
