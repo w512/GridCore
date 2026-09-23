@@ -93,13 +93,13 @@ models:
   #   args: ["--reasoning-format", "deepseek", "--reasoning-budget", "0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20"]
   #   aliases: [qwen38]
 
-  # The same model at Q4_K_M (16.5 GB) is bigger than the card: 64 of 65
-  # layers go to the GPU, the last one plus the output layer stay on the CPU
-  # (--n-gpu-layers in args overrides the default 999): 15.3 GB VRAM,
-  # ~14 tok/s. The estimate does not know about the CPU part, so run
-  # `gridcore bench qwen38-27b` once; the measured footprint replaces the
-  # estimate, which alone would exceed the budget. IQ3_XXS (10.2 GB) fits
-  # next to a 4 GB model but leaks stray </think> tokens; not recommended.
+  # The same model at Q4_K_M (16.5 GB) is bigger than the card. With
+  # --n-gpu-layers 64 (overrides the runtime default 999) llama.cpp keeps the
+  # output layer and the top blocks on the GPU and leaves the two lowest
+  # blocks on the CPU: 15.3 GB VRAM, ~14 tok/s. The estimate understands
+  # -ngl, --cpu-moe, --n-cpu-moe and -ot ...=CPU, so no bench is needed
+  # for admission. IQ3_XXS (10.2 GB) fits next to a 4 GB model but leaks
+  # stray </think> tokens; not recommended.
   # qwen38-27b:
   #   runtime: llamacpp
   #   path: ~/models/Qwen3.8-27B-UD-Q4_K_M.gguf
@@ -107,6 +107,22 @@ models:
   #   ctx: 8192
   #   parallel: 1
   #   args: ["--n-gpu-layers", "64", "--reasoning-format", "deepseek", "--reasoning-budget", "0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20"]
+
+  # A mixture-of-experts model bigger than the card, the cheap way: 35B total,
+  # ~3B active per token. --cpu-moe keeps all routed experts (~18.6 GB) in
+  # host RAM and puts only attention, shared experts and the output layer on
+  # the GPU: 2.3 GB VRAM, 46 tok/s generation (same as the dense 9B that is
+  # fully on the GPU), so it lives next to the 12B instead of evicting it.
+  # The price is prompt processing on the CPU: ~330 tok/s, ~520 with -ub 1024
+  # (+100 MB VRAM). Needs the RAM: 20 GB of experts plus page cache.
+  #   ornith-ai/Ornith-1.5-35B-A3B-GGUF   Ornith-1.5-35B-Q4_K_M.gguf (+ mmproj-Ornith-1.5-35B-BF16.gguf)
+  # ornith-35b:
+  #   runtime: llamacpp
+  #   path: ~/models/Ornith-1.5-35B-Q4_K_M.gguf
+  #   capabilities: [chat]
+  #   ctx: 16384
+  #   parallel: 2
+  #   args: ["--cpu-moe", "-ub", "1024", "--reasoning-format", "deepseek", "--reasoning-budget", "0", "--temp", "0.6", "--top-p", "0.95", "--top-k", "20"]
 
 policy:
   default_class: interactive
