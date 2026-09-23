@@ -41,8 +41,10 @@ closer to an operating-system scheduler: it manages *workload classes*,
   time), so indexing never starves.
 - **VRAM-aware admission.** Before a model is loaded GridCore knows whether
   it fits: it reads the GGUF header and estimates weights, KV cache and
-  buffers (within about 10% on tested models), then replaces the estimate
-  with the measured footprint after the first load.
+  buffers (within about 10% on tested models), honouring the llama.cpp
+  offload flags in the model's args (`-ngl`, `--cpu-moe`, `--n-cpu-moe`,
+  `-ot ...=CPU`), then replaces the estimate with the measured footprint
+  after the first load.
 - **Model residency.** Models stay loaded while they are useful. A model the
   user is actively chatting with is *hot* and cannot be evicted by background
   work; cold models are evicted LRU-first when something else needs the room;

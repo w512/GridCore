@@ -12,14 +12,15 @@ import (
 // `gridcore models --explain` and error messages can show where the number
 // comes from.
 type Estimate struct {
-	TotalMB    int
-	WeightsMB  int // tensors that live in VRAM (embedding tables excluded)
-	EmbedMB    int // token / per-layer embeddings kept in host memory
-	KVMB       int
-	MMProjMB   int
-	OverheadMB int // CUDA context + compute/logit buffers
-	Method     string
-	Notes      []string
+	TotalMB       int
+	WeightsMB     int // tensors that live in VRAM (embedding tables excluded)
+	EmbedMB       int // token / per-layer embeddings kept in host memory
+	HostWeightsMB int // weights kept on the CPU by -ngl / --cpu-moe / -ot
+	KVMB          int
+	MMProjMB      int
+	OverheadMB    int // CUDA context + compute/logit buffers
+	Method        string
+	Notes         []string
 }
 
 // EstimateVRAM predicts sp's footprint. It reads the GGUF header when
@@ -53,11 +54,29 @@ func estimateFromGGUF(sp *Spec) (Estimate, error) {
 	var e Estimate
 	e.Method = "gguf:" + f.Arch()
 
+	// Layer layout. block_count may include multi-token-prediction blocks
+	// (nextn_predict_layers) that llama.cpp never loads.
+	nLayerAll64, _ := f.Uint("block_count")
+	nLayerAll := int(nLayerAll64)
+	nLayer := nLayerAll
+	if mtp, ok := f.Uint("nextn_predict_layers"); ok && int(mtp) < nLayerAll {
+		nLayer = nLayerAll - int(mtp)
+		e.Notes = append(e.Notes, fmt.Sprintf("%d MTP block(s) not loaded", mtp))
+	}
+	pl := parsePlacement(sp.Args)
+	e.Notes = append(e.Notes, pl.notes...)
+	firstGPU, outputOnGPU := pl.firstGPUBlock(nLayerAll)
+	if firstGPU > nLayer {
+		firstGPU = nLayer
+	}
+
 	// Weights: everything except embedding tables, which llama.cpp keeps in
 	// host memory (token_embd is the CPU-side input layer; Gemma's
 	// per_layer_token_embd is read lazily). Exception: models with tied
 	// embeddings (no output.weight) duplicate token_embd onto the GPU as the
-	// output projection, so it counts.
+	// output projection, so it counts. Then the offload flags: blocks below
+	// -ngl, routed experts under --cpu-moe / --n-cpu-moe and anything an -ot
+	// rule pins to CPU stay on the host.
 	_, hasOutput := f.Tensor("output.weight")
 	encoder := isEncoder(f)
 	tied := !hasOutput && !encoder
@@ -65,6 +84,9 @@ func estimateFromGGUF(sp *Spec) (Estimate, error) {
 		e.Notes = append(e.Notes, "tied embeddings: token_embd counted in VRAM")
 	}
 	var vocab uint64
+	var hostBlocks, hostExpertBlocks int
+	seenHostBlock := map[int]bool{}
+	seenExpertBlock := map[int]bool{}
 	for _, t := range f.Tensors {
 		b := t.Bytes()
 		if t.Name == "token_embd.weight" && len(t.Dims) == 2 {
@@ -74,7 +96,41 @@ func estimateFromGGUF(sp *Spec) (Estimate, error) {
 			e.EmbedMB += int(b / mb)
 			continue
 		}
-		e.WeightsMB += int(b / mb)
+		blk, isBlock := blockIndex(t.Name)
+		switch {
+		case isBlock && blk >= nLayer:
+			continue // MTP block: not loaded anywhere
+		case isBlock && blk < firstGPU:
+			if !seenHostBlock[blk] {
+				seenHostBlock[blk] = true
+				hostBlocks++
+			}
+			e.HostWeightsMB += int(b / mb)
+		case isBlock && isExpertTensor(t.Name) && pl.expertsOnCPU(blk):
+			if !seenExpertBlock[blk] {
+				seenExpertBlock[blk] = true
+				hostExpertBlocks++
+			}
+			e.HostWeightsMB += int(b / mb)
+		case !isBlock && !outputOnGPU && !isMMProjTensor(t.Name):
+			e.HostWeightsMB += int(b / mb)
+		case pl.overriddenToCPU(t.Name):
+			e.HostWeightsMB += int(b / mb)
+		default:
+			e.WeightsMB += int(b / mb)
+		}
+	}
+	if hostBlocks > 0 {
+		e.Notes = append(e.Notes, fmt.Sprintf("-ngl: %d block(s) + their KV on host", hostBlocks))
+	}
+	if !outputOnGPU {
+		e.Notes = append(e.Notes, "-ngl 0: output layer on host")
+	}
+	if hostExpertBlocks > 0 {
+		e.Notes = append(e.Notes, fmt.Sprintf("experts of %d block(s) on host", hostExpertBlocks))
+	}
+	if len(pl.cpuPatterns) > 0 && hostExpertBlocks == 0 && hostBlocks == 0 && e.HostWeightsMB > 0 {
+		e.Notes = append(e.Notes, "-ot: tensors pinned to CPU")
 	}
 	if vocab == 0 {
 		if v, ok := f.Uint("vocab_size"); ok {
@@ -85,8 +141,8 @@ func estimateFromGGUF(sp *Spec) (Estimate, error) {
 		}
 	}
 
-	// KV cache.
-	kvBytes, notes := kvCacheBytes(f, sp)
+	// KV cache: only for the blocks that live on the GPU.
+	kvBytes, notes := kvCacheBytes(f, sp, nLayer, firstGPU)
 	e.KVMB = int(kvBytes / mb)
 	e.Notes = append(e.Notes, notes...)
 
@@ -100,11 +156,17 @@ func estimateFromGGUF(sp *Spec) (Estimate, error) {
 	}
 
 	e.OverheadMB = cudaContextMB
-	if !encoder {
+	if !encoder && outputOnGPU {
 		e.OverheadMB += int(uint64(nUbatch) * vocab * 4 / mb) // logits
 	}
 	e.TotalMB = e.WeightsMB + e.KVMB + e.MMProjMB + e.OverheadMB
 	return e, nil
+}
+
+// isMMProjTensor guards against projector tensors that some converters
+// leave in the main file; they are not part of the output layer.
+func isMMProjTensor(name string) bool {
+	return strings.HasPrefix(name, "v.") || strings.HasPrefix(name, "mm.")
 }
 
 // isEncoder reports embedding-only models (BERT family): no logits, no
@@ -124,13 +186,14 @@ func isHostEmbedding(name string) bool {
 // kvCacheBytes sizes the KV cache for ctx tokens, walking the layer layout:
 // sliding-window layers hold only the window, shared-KV layers hold nothing,
 // hybrid (SSM / linear attention) layers hold a small recurrent state.
-func kvCacheBytes(f *gguf.File, sp *Spec) (uint64, []string) {
+// n is the number of loaded blocks (MTP blocks excluded); blocks below
+// firstGPU keep their cache on the host and are not counted.
+func kvCacheBytes(f *gguf.File, sp *Spec, n, firstGPU int) (uint64, []string) {
 	var notes []string
-	nLayer, ok := f.Uint("block_count")
-	if !ok || nLayer == 0 {
+	if n <= 0 {
 		return 0, []string{"block_count missing; KV cache not estimated"}
 	}
-	n := int(nLayer)
+	nLayer := uint64(n)
 	ctx := uint64(sp.Ctx)
 
 	headCount, _ := f.Uint("attention.head_count")
@@ -196,7 +259,7 @@ func kvCacheBytes(f *gguf.File, sp *Spec) (uint64, []string) {
 	bytesK, bytesV := cacheTypeBytes(sp.Args)
 	var total float64
 	var recurrent int
-	for i := 0; i < n; i++ {
+	for i := firstGPU; i < n; i++ {
 		if shared > 0 && uint64(i) >= nLayer-shared {
 			continue
 		}
@@ -288,8 +351,12 @@ func estimateFromFileSize(sp *Spec) Estimate {
 
 // String renders the breakdown on one line.
 func (e Estimate) String() string {
-	s := fmt.Sprintf("%d MB (%s: weights %d + kv %d + mmproj %d + overhead %d; host embeddings %d)",
+	s := fmt.Sprintf("%d MB (%s: weights %d + kv %d + mmproj %d + overhead %d; host embeddings %d",
 		e.TotalMB, e.Method, e.WeightsMB, e.KVMB, e.MMProjMB, e.OverheadMB, e.EmbedMB)
+	if e.HostWeightsMB > 0 {
+		s += fmt.Sprintf(", host weights %d", e.HostWeightsMB)
+	}
+	s += ")"
 	if len(e.Notes) > 0 {
 		s += " [" + strings.Join(e.Notes, "; ") + "]"
 	}
