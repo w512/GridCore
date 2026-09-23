@@ -80,6 +80,34 @@ models:
   #   parallel: 2
   #   args: ["--reasoning-budget", "0"]
 
+  # A 27B on a 16 GB card. At IQ4_XS (13.3 GB) it fits on the GPU entirely:
+  # 13.7 GB VRAM, ~18 tok/s, wikitext PPL +0.9% vs Q4_K_M. Only the pinned
+  # embedder fits next to it, so every other request evicts it and back.
+  #   unsloth/Qwen3.8-27B-GGUF   Qwen3.8-27B-UD-IQ4_XS.gguf (+ mmproj-F16.gguf for vision, +1.2 GB VRAM)
+  # qwen38-27b-iq4xs:
+  #   runtime: llamacpp
+  #   path: ~/models/Qwen3.8-27B-UD-IQ4_XS.gguf
+  #   capabilities: [chat]
+  #   ctx: 8192
+  #   parallel: 1
+  #   args: ["--reasoning-format", "deepseek", "--reasoning-budget", "0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20"]
+  #   aliases: [qwen38]
+
+  # The same model at Q4_K_M (16.5 GB) is bigger than the card: 64 of 65
+  # layers go to the GPU, the last one plus the output layer stay on the CPU
+  # (--n-gpu-layers in args overrides the default 999): 15.3 GB VRAM,
+  # ~14 tok/s. The estimate does not know about the CPU part, so run
+  # `gridcore bench qwen38-27b` once; the measured footprint replaces the
+  # estimate, which alone would exceed the budget. IQ3_XXS (10.2 GB) fits
+  # next to a 4 GB model but leaks stray </think> tokens; not recommended.
+  # qwen38-27b:
+  #   runtime: llamacpp
+  #   path: ~/models/Qwen3.8-27B-UD-Q4_K_M.gguf
+  #   capabilities: [chat]
+  #   ctx: 8192
+  #   parallel: 1
+  #   args: ["--n-gpu-layers", "64", "--reasoning-format", "deepseek", "--reasoning-budget", "0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20"]
+
 policy:
   default_class: interactive
   classes:
