@@ -83,7 +83,13 @@ type Scheduler struct {
 	snapOK     bool
 	polling    bool
 	externalMB int
-	gpuName    string
+	// externalSettle is the number of upcoming snapshots that may not raise
+	// externalMB. Set when an instance goes away: nvidia-smi answers
+	// memory.used and the process list in two calls, so a process that
+	// exits between them shows up as unattributed "external" memory for one
+	// poll and would trigger a spurious eviction.
+	externalSettle int
+	gpuName        string
 
 	runningInteractive int
 	lastInteractiveEnd time.Time

@@ -18,15 +18,16 @@ type Monitor struct {
 	name    string
 	totalMB int
 
-	mu       sync.Mutex
-	procs    map[int]int // pid -> MB
-	external int         // MB used by "someone else" (desktop, other apps)
-	util     int
+	mu        sync.Mutex
+	procs     map[int]int // pid -> MB
+	lingering map[int]int // pid -> MB still counted in memory.used after the process left the list
+	external  int         // MB used by "someone else" (desktop, other apps)
+	util      int
 }
 
 // New creates a fake GPU with the given capacity.
 func New(name string, totalMB int) *Monitor {
-	return &Monitor{name: name, totalMB: totalMB, procs: map[int]int{}}
+	return &Monitor{name: name, totalMB: totalMB, procs: map[int]int{}, lingering: map[int]int{}}
 }
 
 // Attach records pid as using mb of VRAM.
@@ -36,11 +37,31 @@ func (m *Monitor) Attach(pid, mb int) {
 	m.procs[pid] = mb
 }
 
-// Detach removes pid.
+// Detach removes pid and frees its memory at once.
 func (m *Monitor) Detach(pid int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.procs, pid)
+	delete(m.lingering, pid)
+}
+
+// Linger models process teardown as nvidia-smi shows it: pid is gone from
+// the per-process list, but its memory is still part of memory.used until
+// Release (or Detach) is called.
+func (m *Monitor) Linger(pid int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if mb, ok := m.procs[pid]; ok {
+		m.lingering[pid] = mb
+		delete(m.procs, pid)
+	}
+}
+
+// Release frees memory left behind by Linger.
+func (m *Monitor) Release(pid int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.lingering, pid)
 }
 
 // SetExternal sets memory consumed by processes GridCore does not manage.
@@ -72,6 +93,9 @@ func (m *Monitor) Snapshot(_ context.Context) (gpu.Snapshot, error) {
 	for pid, mb := range m.procs {
 		s.UsedMB += mb
 		s.Processes = append(s.Processes, gpu.ProcessUsage{PID: pid, UsedMB: mb})
+	}
+	for _, mb := range m.lingering {
+		s.UsedMB += mb
 	}
 	sort.Slice(s.Processes, func(i, j int) bool { return s.Processes[i].PID < s.Processes[j].PID })
 	if s.UsedMB > s.TotalMB {

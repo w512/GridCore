@@ -314,6 +314,7 @@ func (s *Scheduler) onDied(e evDied) {
 	}
 	s.res.Remove(e.id)
 	s.ports[ent.Spec.Runtime].release(ent.Port)
+	s.externalSettle = externalSettleSnapshots
 	s.m.InstanceCrashes.WithLabelValues(e.id).Inc()
 	detail := "process exited"
 	if err := e.inst.Err(); err != nil {
@@ -342,11 +343,17 @@ func (s *Scheduler) onStopped(e evStopped) {
 	}
 	s.res.Remove(e.id)
 	s.ports[ent.Spec.Runtime].release(ent.Port)
+	s.externalSettle = externalSettleSnapshots
 	s.m.ModelEvictions.WithLabelValues(e.id, e.reason).Inc()
 	s.event(EvUnloaded, e.id, e.reason)
 	s.log.Info("model unloaded", "model", e.id, "reason", e.reason)
 	s.updateResidentGauge()
 }
+
+// externalSettleSnapshots is how many polls after an instance disappears
+// its memory may still show up as unattributed. One covers a snapshot that
+// was already in flight; the second covers driver teardown lag.
+const externalSettleSnapshots = 2
 
 // stopEntry transitions a drained entry to Stopping and stops it
 // asynchronously. Callers guarantee Running == 0 (invariant #1).
@@ -393,11 +400,14 @@ func (s *Scheduler) onSnapshot(e evSnapshot) {
 	}
 
 	ours := 0
-	loading := false
+	transient := false // an instance is appearing or disappearing
 	for _, ent := range s.res.All() {
 		if ent.State == residency.Loading {
-			loading = true
+			transient = true
 			continue
+		}
+		if ent.State == residency.Stopping {
+			transient = true
 		}
 		if ent.Instance == nil {
 			continue
@@ -414,14 +424,23 @@ func (s *Scheduler) onSnapshot(e evSnapshot) {
 		key := s.profileKey(ent.Spec)
 		_ = s.store.Update(key, ent.ID, func(p *model.Profile) { p.ObserveVRAM(mb) })
 	}
-	// While something is loading its growing footprint would be attributed
-	// to "external"; freeze the last known external value instead.
-	if !loading {
-		if ext := e.snap.UsedMB - ours; ext > 0 {
-			s.externalMB = ext
-		} else {
-			s.externalMB = 0
-		}
+	// Memory we cannot attribute to our own instances is "external". While
+	// an instance is loading its growing footprint would land there; while
+	// one is stopping (and for a couple of polls after it is gone) the
+	// driver may still report its memory as used after the process has left
+	// the per-PID list. In both cases hold the last known value rather than
+	// mistake our own memory for someone else's and evict a neighbour to
+	// make room for it. A drop is always real and is taken immediately.
+	if s.externalSettle > 0 {
+		s.externalSettle--
+		transient = true
+	}
+	ext := e.snap.UsedMB - ours
+	if ext < 0 {
+		ext = 0
+	}
+	if !transient || ext < s.externalMB {
+		s.externalMB = ext
 	}
 
 	mb := func(v int) float64 { return float64(v) * 1024 * 1024 }

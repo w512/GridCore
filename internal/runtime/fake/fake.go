@@ -39,6 +39,11 @@ type Runtime struct {
 	LoadTimeout time.Duration
 	// StopDelay makes Stop take this long, simulating process teardown.
 	StopDelay time.Duration
+	// TeardownLinger, if set, reproduces what nvidia-smi shows while a
+	// process exits: the PID leaves the per-process list as soon as Stop
+	// starts, but its memory stays in memory.used for this long (measured
+	// from the start of Stop, so it may outlive StopDelay).
+	TeardownLinger time.Duration
 	// FailLoad, if set, makes every Load fail after the load delay. Tests use
 	// it to exercise crash/retry paths. Read under mu so tests may flip it
 	// while the scheduler is running.
@@ -149,6 +154,7 @@ func (r *Runtime) Load(ctx context.Context, spec *model.Spec, port int) (runtime
 		done:      make(chan struct{}),
 		delay:     r.RequestDelay,
 		stopDelay: r.StopDelay,
+		linger:    r.TeardownLinger,
 		gpu:       r.gpu,
 		rt:        r,
 	}
@@ -177,6 +183,7 @@ type Instance struct {
 	started   time.Time
 	delay     time.Duration
 	stopDelay time.Duration
+	linger    time.Duration
 	gpu       *gpufake.Monitor
 	rt        *Runtime
 	srv       *http.Server
@@ -233,13 +240,20 @@ func (i *Instance) Health(ctx context.Context) error {
 // behind, which Shutdown treats as "new" and waits on for 5 s (Go issue
 // 22682). A real process gets SIGTERM and does not have that problem.
 func (i *Instance) Stop(ctx context.Context) error {
+	if i.gpu != nil && i.linger > 0 {
+		// The process is gone from the per-PID list right away; its memory
+		// is reclaimed by the "driver" later, independent of StopDelay.
+		i.gpu.Linger(i.pid)
+		pid, g := i.pid, i.gpu
+		time.AfterFunc(i.linger, func() { g.Release(pid) })
+	}
 	if i.stopDelay > 0 {
 		select {
 		case <-time.After(i.stopDelay):
 		case <-ctx.Done():
 		}
 	}
-	if i.gpu != nil {
+	if i.gpu != nil && i.linger == 0 {
 		i.gpu.Detach(i.pid)
 	}
 	i.srv.SetKeepAlivesEnabled(false)

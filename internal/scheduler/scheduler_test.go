@@ -609,6 +609,66 @@ func TestEvictsOnlyAsMuchAsNeeded(t *testing.T) {
 	}
 }
 
+func TestTeardownMemoryNotMistakenForExternal(t *testing.T) {
+	// Reproduces a bug seen on real hardware: a 10.8 GB and a 4.1 GB model
+	// resident, a 2.9 GB model requested. The planner evicted the LRU model
+	// (enough on its own), but nvidia-smi answers memory.used and the process
+	// list in two calls, so for one poll the dying process's memory showed up
+	// as unattributed "external" usage. With ~11 GB "external" the second
+	// model was evicted too, in the same millisecond the first one unloaded.
+	models := "  big:   { runtime: sim, capabilities: [chat], fake_vram_mb: 10000, fake_load_time: 10ms }\n" +
+		"  mid:   { runtime: sim, capabilities: [chat], fake_vram_mb: 4000, fake_load_time: 10ms }\n" +
+		"  small: { runtime: sim, capabilities: [chat], fake_vram_mb: 2900, fake_load_time: 40ms }\n"
+	h := newHarness(t, 16000, models)
+	h.rt.StopDelay = 50 * time.Millisecond      // Stopping spans several polls...
+	h.rt.TeardownLinger = 90 * time.Millisecond // ...and the memory outlives Stop
+	for _, id := range []string{"big", "mid"} {
+		if err := h.s.LoadModel(id); err != nil {
+			t.Fatal(err)
+		}
+		h.eventually(isReady(id), id+" loaded")
+		h.clock.Advance(time.Second) // big is LRU
+	}
+	// budget 15488 - 10000 - 4000 = 1488 free; small needs 3412 -> evict big only.
+	inter := h.submit(job.Interactive, "small", 1)
+
+	// Watch external while big tears down: it must never absorb big's memory.
+	stop := make(chan struct{})
+	var maxExternal atomic.Int64
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(2 * time.Millisecond):
+				if x := int64(h.s.State().GPU.ExternalMB); x > maxExternal.Load() {
+					maxExternal.Store(x)
+				}
+			}
+		}
+	}()
+	g := h.grant(inter, wait)
+	inter.StepDone(g.Step, nil, Usage{})
+	if err := h.finish(inter, wait); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(120 * time.Millisecond) // let the lingering memory be released and polled
+	close(stop)
+
+	if r := h.resident("mid"); r == nil || r.State != "ready" {
+		t.Fatalf("mid must survive: %+v\n%s", r, h.dump())
+	}
+	if n := len(h.events(EvEvict)); n != 1 {
+		t.Errorf("evict events = %d, want 1\n%s", n, h.dump())
+	}
+	if x := maxExternal.Load(); x != 0 {
+		t.Errorf("external peaked at %d MB during teardown, want 0", x)
+	}
+	if x := h.s.State().GPU.ExternalMB; x != 0 {
+		t.Errorf("external after settle = %d MB, want 0", x)
+	}
+}
+
 func TestOOMDiscardsProfile(t *testing.T) {
 	h := newHarness(t, 16000, chat)
 	// First load succeeds and measures 9000 MB into the profile.
