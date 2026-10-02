@@ -3,9 +3,14 @@
 //
 //	go run ./scripts/loadtest -addr 127.0.0.1:8080 -duration 5m -clients 20 \
 //	    -interactive gemma4-12b,ornith -background ambient -batch tiny -embed nomic-embed
+//
+// -scenario ambient runs the v0.2 acceptance scenario instead: one GPU
+// shared by a chat, a coding agent, an ambient screenshot analyser, a file
+// indexer and a periodic OCR job (see ambient.go).
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -22,8 +27,13 @@ import (
 	"time"
 )
 
+// statusUnfinished marks a request that had no answer when the run ended:
+// a role that never gets the GPU must show up in the report, not vanish.
+const statusUnfinished = -1
+
 type sample struct {
-	class   string
+	class   string // class, or role in -scenario ambient
+	model   string // X-GridCore-Model: the variant that served a family request
 	latency time.Duration
 	queue   int64
 	status  int
@@ -40,11 +50,22 @@ func main() {
 	embed := flag.String("embed", "nomic-embed", "embedding model for background embeddings ('' to disable)")
 	maxTokens := flag.Int("max-tokens", 32, "max_tokens per chat request")
 	thinkTime := flag.Duration("think", 500*time.Millisecond, "average pause between requests per client")
+	scenario := flag.String("scenario", "mixed", "mixed | ambient")
+	amb := ambientFlags()
 	flag.Parse()
 
 	ctx, cancel := context.WithTimeout(context.Background(), *dur)
 	defer cancel()
 	client := &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: *clients * 2}}
+
+	if *scenario == "ambient" {
+		before := scrapeCounters(*addr)
+		samples := runAmbient(ctx, client, *addr, amb)
+		report(samples)
+		reportModels(samples)
+		reportCounters(before, scrapeCounters(*addr))
+		return
+	}
 
 	var (
 		mu      sync.Mutex
@@ -154,10 +175,21 @@ func do(c *http.Client, req *http.Request, class string) sample {
 		return s
 	}
 	defer resp.Body.Close()
+	s.model = resp.Header.Get("X-GridCore-Model")
+	fmt.Sscanf(resp.Header.Get("X-GridCore-Queue-Ms"), "%d", &s.queue)
+	// A stream that waited long enough for keep-alives to start has its
+	// headers out before the grant; GridCore then reports the wait and the
+	// model as an SSE comment: ": gridcore queue_ms=N model=M".
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 64<<10), 8<<20)
+	for sc.Scan() {
+		if rest, ok := strings.CutPrefix(sc.Text(), ": gridcore queue_ms="); ok {
+			fmt.Sscanf(rest, "%d model=%s", &s.queue, &s.model)
+		}
+	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	s.latency = time.Since(start)
 	s.status = resp.StatusCode
-	fmt.Sscanf(resp.Header.Get("X-GridCore-Queue-Ms"), "%d", &s.queue)
 	return s
 }
 
@@ -176,9 +208,13 @@ func report(samples []sample) {
 		ss := byClass[c]
 		var lat []time.Duration
 		var q []int64
-		ok, errs := 0, 0
+		ok, errs, unfinished := 0, 0, 0
 		codes := map[int]int{}
 		for _, s := range ss {
+			if s.status == statusUnfinished {
+				unfinished++
+				continue
+			}
 			if s.err != nil {
 				errs++
 				continue
@@ -208,8 +244,11 @@ func report(samples []sample) {
 		}
 		fmt.Printf("%-12s %6d %6d %6d  %8s %8s %8s  %6dms %6dms", c, len(ss), ok, errs,
 			pct(0.5).Round(time.Millisecond), pct(0.95).Round(time.Millisecond), pct(0.99).Round(time.Millisecond), qpct(0.5), qpct(0.95))
-		if len(codes) > 1 || codes[200] == 0 {
+		if len(codes) > 1 || (codes[200] == 0 && len(codes) > 0) {
 			fmt.Printf("  codes=%v", codes)
+		}
+		if unfinished > 0 {
+			fmt.Printf("  still waiting at the end: %d", unfinished)
 		}
 		fmt.Println()
 	}
