@@ -173,6 +173,11 @@ policy:
   # for background (batch) work before it has been resident this long.
   # Interactive work is not held back. "0s" disables.
   min_residency: 30s
+  # Bound on how long batch work waits behind background: a batch job that
+  # has made no progress for this long gets one step even while background
+  # has work queued, and may take a model background is using (never a hot
+  # or pinned one). "0s" = batch runs only when background leaves room.
+  batch_max_starvation: 2m
   # Quiet period after the last interactive step before background may start.
   interactive_idle_before_background: 2s
   # Under continuous interactive traffic, let one background/batch step run

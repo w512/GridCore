@@ -156,3 +156,77 @@ func TestCostEvictionKeepsModelInDemand(t *testing.T) {
 		}
 	}
 }
+
+// Batch must not starve forever behind a background stream that keeps its
+// model busy: after batch_max_starvation (2m) it takes the model, once.
+func TestBatchTakesBackgroundModelWhenOverdue(t *testing.T) {
+	h := newHarness(t, 10000, modelA+modelB)
+	h.run(job.Background, "a")
+	batch := h.submit(job.Batch, "b", 1)
+	for i := 0; i < 11; i++ { // 110s of steady background use
+		h.clock.Advance(10 * time.Second)
+		h.run(job.Background, "a")
+	}
+	h.noGrant(batch, 30*time.Millisecond)
+
+	h.clock.Advance(15 * time.Second) // 125s since the batch job arrived
+	if err := h.runToCompletion(batch, wait); err != nil {
+		t.Fatal(err)
+	}
+	if n := h.loadsOf("b"); n != 1 {
+		t.Errorf("b loaded %d times", n)
+	}
+	// Background takes its model back right away; the next batch job waits
+	// its turn again instead of ping-ponging.
+	h.run(job.Background, "a")
+	next := h.submit(job.Batch, "b", 1)
+	h.clock.Advance(10 * time.Second)
+	h.run(job.Background, "a")
+	h.noGrant(next, 30*time.Millisecond)
+	if n := h.loadsOf("a"); n != 2 {
+		t.Errorf("a loaded %d times, want 2", n)
+	}
+}
+
+// An overdue batch job also runs while background work is queued.
+func TestOverdueBatchRunsPastQueuedBackground(t *testing.T) {
+	models := "  a: { runtime: sim, capabilities: [chat], fake_vram_mb: 3000, fake_load_time: 5ms, parallel: 1 }\n" + modelB
+	h := newHarness(t, 16000, models)
+	busy := h.submit(job.Background, "a", 1)
+	g := h.grant(busy, wait)                   // a's only slot is taken...
+	queued := h.submit(job.Background, "a", 1) // ...so this one stays queued
+	batch := h.submit(job.Batch, "b", 1)
+	h.noGrant(batch, 40*time.Millisecond)
+	h.eventually(func(st State) bool {
+		for _, j := range st.Queued {
+			if j.ID == batch.job.ID {
+				return j.Reason == "background queued"
+			}
+		}
+		return false
+	}, "batch waits behind queued background work")
+
+	h.clock.Advance(2*time.Minute + time.Second)
+	gb := h.grant(batch, wait)
+	batch.StepDone(gb.Step, nil, Usage{})
+	found := false
+	for _, e := range h.events(EvPreempt) {
+		found = found || strings.Contains(e.Detail, "behind background")
+	}
+	if !found {
+		t.Errorf("expected a 'waited behind background' event: %v", h.events(EvPreempt))
+	}
+	busy.StepDone(g.Step, nil, Usage{})
+	_ = h.runToCompletion(queued, wait)
+}
+
+func TestBatchMaxStarvationZeroKeepsStrictOrder(t *testing.T) {
+	h := newHarnessWith(t, 10000, modelA+modelB, "  batch_max_starvation: 0s\n")
+	h.run(job.Background, "a")
+	batch := h.submit(job.Batch, "b", 1)
+	for i := 0; i < 20; i++ {
+		h.clock.Advance(10 * time.Second)
+		h.run(job.Background, "a")
+	}
+	h.noGrant(batch, 30*time.Millisecond)
+}

@@ -467,7 +467,7 @@ func (s *Scheduler) onAdmin(e evAdmin) error {
 	now := s.now()
 	switch e.op {
 	case "load":
-		status, err := s.ensureLoaded(sp, job.Background, now)
+		status, err := s.ensureLoaded(sp, job.Background, false, now)
 		if err != nil {
 			return err
 		}

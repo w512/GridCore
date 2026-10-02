@@ -64,14 +64,24 @@ func (s *Scheduler) schedule() {
 		for _, js := range snapshotList(s.q.list(job.Background)) {
 			s.planJob(js, now)
 		}
-		// Batch only runs when background has nothing waiting.
+		// Batch only runs when background has nothing waiting, except that
+		// a batch job overdue by batch_max_starvation gets one step at a
+		// time anyway.
 		if s.q.len(job.Background) == 0 {
 			for _, js := range snapshotList(s.q.list(job.Batch)) {
 				s.planJob(js, now)
 			}
 		} else {
-			for _, js := range s.q.list(job.Batch) {
-				js.reason = "background queued"
+			for _, js := range snapshotList(s.q.list(job.Batch)) {
+				if !s.batchOverdue(js, now) || js.inflight > 0 {
+					js.reason = "background queued"
+					continue
+				}
+				before := js.dispatched
+				s.planJobLimited(js, now, 1)
+				if js.dispatched > before {
+					s.event(EvPreempt, js.job.ID, fmt.Sprintf("batch waited %s behind background; running one step", now.Sub(js.lastProgress).Round(time.Second)))
+				}
 			}
 		}
 	}
@@ -128,6 +138,14 @@ func (s *Scheduler) starvedJobs(now time.Time) []*jobState {
 	return out
 }
 
+// batchOverdue reports whether js is a batch job that has made no progress
+// for policy.batch_max_starvation: it may then run past queued background
+// work and take a model background is using.
+func (s *Scheduler) batchOverdue(js *jobState, now time.Time) bool {
+	limit := s.cfg.Policy.BatchMaxStarvationOrDefault()
+	return js.job.Class == job.Batch && limit > 0 && now.Sub(js.lastProgress) >= limit
+}
+
 // runningLowerSteps counts in-flight background/batch steps.
 func (s *Scheduler) runningLowerSteps() int {
 	n := 0
@@ -180,7 +198,7 @@ func (s *Scheduler) planJobLimited(js *jobState, now time.Time, maxSteps int) {
 		return
 	}
 
-	status, err := s.ensureLoaded(sp, js.job.Class, now)
+	status, err := s.ensureLoaded(sp, js.job.Class, s.batchOverdue(js, now), now)
 	if err != nil {
 		s.fail(js, err, "admission")
 		return
@@ -221,8 +239,9 @@ func (s *Scheduler) heldBy(c job.Class, now time.Time) string {
 //	"evicting" victims were marked; the load starts once they are gone
 //	"waiting"  nothing can be done right now
 //
-// or an error when the model can never fit.
-func (s *Scheduler) ensureLoaded(sp *model.Spec, c job.Class, now time.Time) (string, error) {
+// or an error when the model can never fit. overdue marks a batch job past
+// batch_max_starvation (see residency.VictimsFor).
+func (s *Scheduler) ensureLoaded(sp *model.Spec, c job.Class, overdue bool, now time.Time) (string, error) {
 	if ent, ok := s.res.Get(sp.ID); ok {
 		if ent.State == residency.Loading {
 			return "loading", nil
@@ -250,7 +269,7 @@ func (s *Scheduler) ensureLoaded(sp *model.Spec, c job.Class, now time.Time) (st
 	} else {
 		avail += pending
 	}
-	victims := s.res.Victims(need-avail, c, now)
+	victims := s.res.VictimsFor(need-avail, c, overdue, now)
 	if victims == nil {
 		return "waiting", nil
 	}

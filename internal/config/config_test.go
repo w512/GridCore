@@ -111,7 +111,13 @@ func TestEvictionPolicy(t *testing.T) {
 	if c.Policy.Eviction != EvictionLRU || c.Policy.MinResidencyOrDefault() != 0 {
 		t.Errorf("explicit: eviction=%q min_residency=%v", c.Policy.Eviction, c.Policy.MinResidencyOrDefault())
 	}
-	for _, bad := range []string{"policy:\n  eviction: lfu\n", "policy:\n  min_residency: -1s\n"} {
+	if c.Policy.BatchMaxStarvationOrDefault() != 2*time.Minute {
+		t.Errorf("batch_max_starvation default = %v", c.Policy.BatchMaxStarvationOrDefault())
+	}
+	if c, _ := Parse([]byte("policy:\n  batch_max_starvation: 0s\n")); c.Policy.BatchMaxStarvationOrDefault() != 0 {
+		t.Error("0s must disable the bound")
+	}
+	for _, bad := range []string{"policy:\n  eviction: lfu\n", "policy:\n  min_residency: -1s\n", "policy:\n  batch_max_starvation: -1s\n"} {
 		if _, err := Parse([]byte(bad)); err == nil {
 			t.Errorf("%q should be rejected", bad)
 		}

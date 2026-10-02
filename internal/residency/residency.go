@@ -9,7 +9,8 @@
 //	cold    everything else; evictable for any class, with two exceptions
 //	        that keep models from pushing each other out on every step
 //	        (min_residency): batch work does not evict a model background
-//	        used that recently, and a model loaded for background (batch)
+//	        used that recently (unless the batch job is overdue, see
+//	        batch_max_starvation), and a model loaded for background (batch)
 //	        work is not replaced by other background (batch) work before it
 //	        has been resident that long
 //
@@ -280,6 +281,13 @@ func (s *Set) reloadSeconds(e *Entry) float64 {
 // why. Only Ready entries not already being evicted are ever candidates;
 // this covers the policy on top of that.
 func (s *Set) Protected(e *Entry, c job.Class, now time.Time) (bool, string) {
+	return s.protected(e, c, false, now)
+}
+
+// protected is Protected for a requester that may be overdue: a batch job
+// that has waited longer than policy.batch_max_starvation may take a model
+// background is using, so batch cannot starve behind it forever.
+func (s *Set) protected(e *Entry, c job.Class, overdue bool, now time.Time) (bool, string) {
 	switch s.Tier(e, now) {
 	case Pinned:
 		return true, "pinned"
@@ -295,7 +303,7 @@ func (s *Set) Protected(e *Entry, c job.Class, now time.Time) (bool, string) {
 	if c == job.Interactive || s.opts.MinResidency <= 0 {
 		return false, ""
 	}
-	if c == job.Batch && !e.LastBackground.IsZero() && now.Sub(e.LastBackground) < s.opts.MinResidency {
+	if c == job.Batch && !overdue && !e.LastBackground.IsZero() && now.Sub(e.LastBackground) < s.opts.MinResidency {
 		return true, "in use by background"
 	}
 	if e.LoadedFor == c && now.Sub(e.LoadedAt) < s.opts.MinResidency {
@@ -319,6 +327,11 @@ const maxExactCandidates = 12
 // In lru mode cold idle entries go first, then
 // cold busy ones, then hot ones, least recently used first within each.
 func (s *Set) Victims(needMB int, c job.Class, now time.Time) []*Entry {
+	return s.VictimsFor(needMB, c, false, now)
+}
+
+// VictimsFor is Victims for a requester that may be overdue (see protected).
+func (s *Set) VictimsFor(needMB int, c job.Class, overdue bool, now time.Time) []*Entry {
 	if needMB <= 0 {
 		return []*Entry{}
 	}
@@ -327,7 +340,7 @@ func (s *Set) Victims(needMB int, c job.Class, now time.Time) []*Entry {
 		if e.State != Ready || e.Evicting {
 			continue
 		}
-		if p, _ := s.Protected(e, c, now); p {
+		if p, _ := s.protected(e, c, overdue, now); p {
 			continue
 		}
 		cands = append(cands, e)

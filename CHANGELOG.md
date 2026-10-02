@@ -36,6 +36,12 @@
   work before it has been resident that long. Interactive work is not held
   back. In the 0.1 load test two models 200 MB over budget were reloaded
   30 times in 5 minutes.
+- `policy.batch_max_starvation` (default 2m): a batch job that has made no
+  progress for this long gets one step even while background has work
+  queued, and may take a model background is using (never a hot or pinned
+  one). Without it, on the 4060 Ti batch got nothing in 5 minutes when its
+  model did not fit next to a busy background model. `0s` restores strict
+  ordering.
 - Thrash detection: a model loaded 6 times within 5 minutes produces a
   `thrash` event, a warning with a hint and `gridcore_model_thrash_total`.
 - Model families (`families:` with `preferred` / `balanced` / `compact`

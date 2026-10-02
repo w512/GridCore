@@ -27,7 +27,7 @@ func (a admission) String() string {
 }
 
 // admissionOf mirrors ensureLoaded without side effects.
-func (s *Scheduler) admissionOf(id string, c job.Class, now time.Time) admission {
+func (s *Scheduler) admissionOf(id string, c job.Class, overdue bool, now time.Time) admission {
 	if ent, ok := s.res.Get(id); ok {
 		switch {
 		case ent.State == residency.Loading:
@@ -56,7 +56,7 @@ func (s *Scheduler) admissionOf(id string, c job.Class, now time.Time) admission
 	}
 	if pending := s.pendingFreeMB(); need <= avail+pending {
 		return admEvict // memory is already on its way back
-	} else if s.res.Victims(need-avail-pending, c, now) != nil {
+	} else if s.res.VictimsFor(need-avail-pending, c, overdue, now) != nil {
 		return admEvict
 	}
 	return admNone
@@ -86,7 +86,7 @@ func (s *Scheduler) pickVariant(js *jobState, now time.Time) bool {
 			continue
 		}
 		usable = append(usable, id)
-		adm[id] = s.admissionOf(id, c, now)
+		adm[id] = s.admissionOf(id, c, s.batchOverdue(js, now), now)
 	}
 	if len(usable) == 0 {
 		s.fail(js, fmt.Errorf("%w: every variant of %s is disabled", ErrModelDisabled, js.job.Family), "disabled")

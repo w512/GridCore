@@ -185,6 +185,20 @@ type Policy struct {
 	// background (batch) work before it has been resident this long.
 	// Interactive work is not affected. Unset = 30s; "0s" disables.
 	MinResidency *time.Duration `yaml:"min_residency"`
+	// BatchMaxStarvation bounds how long batch work waits behind
+	// background. A batch job that has made no progress for this long gets
+	// one step even while background has work queued, and may evict a model
+	// background is using (never a hot or pinned one). Unset = 2m; "0s"
+	// disables the bound (batch runs only when background leaves room).
+	BatchMaxStarvation *time.Duration `yaml:"batch_max_starvation"`
+}
+
+// BatchMaxStarvationOrDefault returns the effective batch_max_starvation.
+func (p Policy) BatchMaxStarvationOrDefault() time.Duration {
+	if p.BatchMaxStarvation == nil {
+		return 2 * time.Minute
+	}
+	return *p.BatchMaxStarvation
 }
 
 // Eviction policies.
@@ -492,6 +506,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Policy.MinResidency != nil && *c.Policy.MinResidency < 0 {
 		add("policy.min_residency must be >= 0")
+	}
+	if c.Policy.BatchMaxStarvation != nil && *c.Policy.BatchMaxStarvation < 0 {
+		add("policy.batch_max_starvation must be >= 0")
 	}
 
 	return errors.Join(errs...)

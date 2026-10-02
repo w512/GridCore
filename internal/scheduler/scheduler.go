@@ -443,7 +443,7 @@ func (s *Scheduler) preload() {
 			if sp.Pinned != pinnedPass || !sp.Preload {
 				continue
 			}
-			status, err := s.ensureLoaded(sp, job.Background, now)
+			status, err := s.ensureLoaded(sp, job.Background, false, now)
 			if err != nil {
 				if sp.Pinned {
 					s.log.Error("pinned model cannot be loaded; it will never be available", "model", id, "err", err)

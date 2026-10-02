@@ -63,6 +63,19 @@ func TestBatchDoesNotEvictWhatBackgroundUses(t *testing.T) {
 	if v := s.Victims(1000, job.Batch, later); !eq(ids(v), []string{"e4b"}) {
 		t.Errorf("after min_residency without background use batch may evict it, got %v", ids(v))
 	}
+	if v := s.VictimsFor(1000, job.Batch, true, now); !eq(ids(v), []string{"e4b"}) {
+		t.Errorf("an overdue batch job may take the model background is using, got %v", ids(v))
+	}
+}
+
+func TestOverdueBatchStillRespectsHotAndPinned(t *testing.T) {
+	s := costSet()
+	now := t0.Add(time.Hour)
+	s.Add(entry("hot", 4000, interactiveAt(now.Add(-time.Second))))
+	s.Add(entry("pin", 400, pinned))
+	if v := s.VictimsFor(100, job.Batch, true, now); v != nil {
+		t.Errorf("overdue lifts only the background rule, got %v", ids(v))
+	}
 }
 
 func TestBackgroundEvictsBatchModelRightAway(t *testing.T) {
