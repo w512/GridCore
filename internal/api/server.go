@@ -59,6 +59,8 @@ func New(cfg *config.Config, m *metrics.Metrics, sched Scheduler, version string
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.health)
 	s.mux.Handle("GET /metrics", s.metrics.Handler())
+	s.mux.HandleFunc("GET /{$}", s.root)
+	s.mux.HandleFunc("GET /admin/ui", s.adminUI)
 	s.mux.HandleFunc("GET /admin/state", s.adminState)
 	s.mux.HandleFunc("POST /admin/models/{id}/load", s.adminModel("load"))
 	s.mux.HandleFunc("POST /admin/models/{id}/unload", s.adminModel("unload"))

@@ -176,6 +176,55 @@ func TestNoSchedulerAnswers503(t *testing.T) {
 	}
 }
 
+// The dashboard is one page compiled into the binary: it must load nothing
+// from anywhere but the daemon, and a browser opened on the daemon's
+// address lands on it.
+func TestDashboard(t *testing.T) {
+	cfg, _ := config.Parse([]byte("runtimes:\n  sim: {type: simulation}\nmodels:\n  chat: {runtime: sim, capabilities: [chat], simulated_vram_mb: 1}\n"))
+	ts := httptest.NewServer(New(cfg, metrics.New(), nil, "test").Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/admin/ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	page := string(body)
+	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("status %d, content type %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	csp := resp.Header.Get("Content-Security-Policy")
+	for _, want := range []string{"default-src 'none'", "connect-src 'self'", "frame-ancestors 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP %q lacks %q", csp, want)
+		}
+	}
+	if !strings.Contains(page, `fetch("/admin/state"`) || !strings.Contains(page, "<title>GridCore</title>") {
+		t.Error("the page should poll /admin/state")
+	}
+	for _, ext := range []string{`src="http`, `href="http`, `url(http`, `@import`} {
+		if strings.Contains(page, ext) {
+			t.Errorf("the page must be self-contained, found %q", ext)
+		}
+	}
+
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err = noFollow.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/admin/ui" {
+		t.Errorf("/ -> %d %q, want 302 /admin/ui", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp, _ = http.Get(ts.URL + "/nothing-here")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown paths must stay 404, got %d", resp.StatusCode)
+	}
+}
+
 // ---- inference ----
 
 func TestChatNonStreaming(t *testing.T) {

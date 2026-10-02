@@ -31,6 +31,12 @@ b11146 (Homebrew).
   (`gridcore_device_oom_total`); the model loaded within the last minute is
   unloaded with its measurement discarded, and background loads wait 30 s.
 - `examples/apple-24gb.yaml`, `deploy/gridcore.plist` (launchd agent).
+- Dashboard at `/admin/ui` (`/` redirects there): the memory budget split
+  by model, memory / queue / utilisation charts over ten minutes, resident
+  models, running and queued jobs with why they wait, and every scheduler
+  event since the page was opened (the daemon keeps only its last 100).
+  One page compiled into the binary that polls `/admin/state`: no external
+  resources (a CSP forbids them), read-only.
 
 ### Changed
 - llama.cpp launch defaults on unified memory, each only if the binary

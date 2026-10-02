@@ -69,8 +69,9 @@ closer to an operating-system scheduler: it manages *workload classes*,
   instead of crashing three more times. Repeated failures trip a circuit
   breaker per model. A crashed daemon's orphaned runtimes are reaped on the
   next start.
-- **Observable.** Prometheus metrics, a JSON state endpoint, and
-  `gridcore status --watch` showing what is running, queued and resident.
+- **Observable.** A dashboard at `/admin/ui`, `gridcore status --watch` in
+  the terminal, a JSON state endpoint and Prometheus metrics, all showing
+  what is running, queued and resident.
   Decisions explain themselves: an eviction states what the victim cost, a
   waiting job says which model holds the memory and why, a family request
   says why it got the variant it got.
@@ -111,8 +112,9 @@ curl localhost:8080/v1/chat/completions -d '{
 ```
 
 `gpt-4o` here is an alias from the config, so existing tools work without
-changes. Run `gridcore status --watch` in another terminal to see the
-scheduler work.
+changes. Open <http://127.0.0.1:8080/> in a browser for the dashboard, or
+run `gridcore status --watch` in another terminal, to see the scheduler
+work.
 
 ### On an Apple Silicon Mac
 
@@ -371,6 +373,13 @@ RESIDENT
   ornith-35b       ready    hot    ▇▇░░░░░░░░░░░░░░░░░░   2.2 GB  slots 0/2  cost 2.1
 ```
 
+The dashboard at `/admin/ui` shows the same in a browser, plus ten minutes
+of memory, queue and utilisation history and every load and eviction since
+the page was opened. It is one page compiled into the binary that polls
+`/admin/state`; it loads nothing from the internet and changes nothing.
+
+![GridCore dashboard: memory budget split by model, memory, queue and GPU utilisation charts, resident models with tier, size, slots and eviction cost, running and queued jobs, and the scheduler's events](docs/gridcore-dashboard.png)
+
 Under load on that card:
 
 - **Mixed load** (6 chatting clients, 8 background, 4 batch, 2 embedding;
@@ -403,8 +412,9 @@ Measurements of eleven model variants on that card informed the defaults in
 | `make tools` | build `bin/gc-chat` (streaming chat) and `bin/gc-indexer` (background load with progress bar) |
 
 HTTP: `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`,
-`/v1/models`, `/health`, `/metrics`, `/admin/state`,
-`POST /admin/models/{id}/{load,unload,enable}`.
+`/v1/models`, `/health`, `/metrics`, `/admin/state`, `/admin/ui` (the
+dashboard; `/` redirects there), `POST /admin/models/{id}/{load,unload,enable}`.
+There is no authentication yet: keep `server.listen` on `127.0.0.1`.
 
 Run it as a service with [`deploy/gridcore.service`](deploy/gridcore.service)
 on Linux (`systemctl --user enable --now gridcore`) or
@@ -423,8 +433,7 @@ tested on an M4 Pro 24 GB with macOS 15.8 and llama.cpp b11146.
 
 Deliberately not yet: cloud fallback, preempting a chat mid-generation,
 vLLM/MLX runtimes, AMD GPUs (APUs with unified memory included), multiple
-GPUs, authentication, a web dashboard. The architecture has room for all of
-them.
+GPUs, authentication. The architecture has room for all of them.
 
 ## Building
 

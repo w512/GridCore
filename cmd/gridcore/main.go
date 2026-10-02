@@ -158,6 +158,7 @@ func cmdServe(args []string) error {
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("gridcore listening", "addr", cfg.Server.Listen, "models", len(cfg.Models), "gpu", cfg.GPU.Device, "state_dir", cfg.StateDir)
+		slog.Info("dashboard", "url", "http://"+cfg.Server.Listen+"/admin/ui")
 		if err := httpSrv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}

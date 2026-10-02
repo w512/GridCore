@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GridCore</title>
+<style>
+:root {
+	--bg: #f6f7f9; --card: #fff; --fg: #1d2430; --dim: #6b7685; --line: #e3e7ec;
+	--interactive: #b04fd0; --background: #1b9aaa; --batch: #3d6fd8;
+	--hot: #b04fd0; --pinned: #3d6fd8; --cold: #8d98a6;
+	--ok: #2e9d63; --warn: #d6911e; --bad: #d64545; --free: #eef1f4; --ext: #b9c1cb;
+}
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #12161c; --card: #1a2028; --fg: #e3e8ee; --dim: #8b96a4; --line: #2a323d;
+		--interactive: #c77ee0; --background: #2fb8c9; --batch: #6b93ee;
+		--hot: #c77ee0; --pinned: #6b93ee; --cold: #6e7987;
+		--ok: #45b97c; --warn: #e3a440; --bad: #e86464; --free: #232a34; --ext: #4a5462;
+	}
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.mono, td.num, .ev-time { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 22px; border-bottom: 1px solid var(--line); background: var(--card); }
+header h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+header .device { color: var(--dim); }
+header .spacer { flex: 1; }
+.badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: .3px; color: #fff; background: var(--dim); }
+.badge.idle { background: var(--ok); }
+.badge.interactive { background: var(--interactive); }
+.badge.normal { background: var(--ok); }
+.badge.warn { background: var(--warn); }
+.badge.critical, .badge.down { background: var(--bad); }
+.conn { color: var(--dim); font-size: 12.5px; }
+.conn::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--ok); vertical-align: 1px; }
+.conn.down::before { background: var(--bad); }
+main { padding: 18px 22px 40px; display: grid; gap: 16px; max-width: 1500px; margin: 0 auto; }
+main.stale { opacity: .55; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; color: var(--dim); margin: 0 0 10px; font-weight: 600; }
+.card h2 .count { color: var(--fg); margin-left: 6px; }
+.row { display: grid; gap: 16px; }
+.row.charts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.row.jobs { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 1100px) { .row.charts, .row.jobs { grid-template-columns: minmax(0, 1fr); } }
+.membar { display: flex; height: 34px; border-radius: 7px; overflow: hidden; background: var(--free); }
+.membar div { height: 100%; min-width: 2px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 6px; border-right: 1px solid var(--card); }
+.membar .loading { background: repeating-linear-gradient(45deg, var(--warn), var(--warn) 6px, transparent 6px, transparent 12px); color: var(--fg); }
+.membar .external { background: var(--ext); color: var(--fg); }
+.memstats { display: flex; flex-wrap: wrap; gap: 6px 26px; margin-top: 10px; color: var(--dim); }
+.memstats b { color: var(--fg); font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; font-size: 12px; color: var(--dim); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+canvas { width: 100%; height: 150px; display: block; }
+.chart-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--dim); margin-top: 6px; }
+.chart-legend i { display: inline-block; width: 12px; height: 3px; margin-right: 5px; vertical-align: 3px; border-radius: 2px; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-size: 11.5px; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; padding: 4px 8px 6px; border-bottom: 1px solid var(--line); }
+td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+td.num { text-align: right; white-space: nowrap; }
+.empty { color: var(--dim); padding: 6px 8px; }
+.tag { font-weight: 600; }
+.tag.interactive, .tag.hot { color: var(--interactive); }
+.tag.background { color: var(--background); }
+.tag.batch, .tag.pinned { color: var(--pinned); }
+.tag.cold { color: var(--cold); }
+.tag.ready { color: var(--ok); }
+.tag.loading { color: var(--warn); }
+.tag.draining, .tag.stopping { color: var(--bad); }
+.slots { display: inline-flex; gap: 3px; vertical-align: middle; }
+.slots i { width: 9px; height: 9px; border-radius: 2px; background: var(--free); border: 1px solid var(--line); }
+.slots i.busy { background: var(--ok); border-color: var(--ok); }
+.reason { color: var(--dim); font-size: 12.5px; }
+.progress { color: var(--ok); font-weight: 600; }
+.disabled { margin-top: 10px; color: var(--bad); font-size: 13px; }
+.events { max-height: 380px; overflow-y: auto; }
+.ev { display: grid; grid-template-columns: 70px 86px 150px 1fr; gap: 10px; padding: 3px 4px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.ev:last-child { border-bottom: 0; }
+.ev-time { color: var(--dim); text-align: right; }
+.ev-kind { font-weight: 600; }
+.ev-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev-detail { color: var(--dim); overflow-wrap: anywhere; }
+.k-red { color: var(--bad); } .k-yellow { color: var(--warn); } .k-green { color: var(--ok); } .k-magenta { color: var(--interactive); }
+.toolbar { display: flex; justify-content: space-between; align-items: baseline; }
+.toolbar label { font-size: 12.5px; color: var(--dim); cursor: pointer; user-select: none; }
+footer { text-align: center; color: var(--dim); font-size: 12px; padding: 0 0 24px; }
+footer a { color: var(--dim); }
+</style>
+</head>
+<body>
+<header>
+	<h1>GridCore</h1>
+	<span class="device" id="device">connecting…</span>
+	<span class="badge" id="mode">—</span>
+	<span class="badge" id="pressure" hidden></span>
+	<span class="spacer"></span>
+	<span class="conn" id="conn">connecting</span>
+</header>
+
+<main id="main">
+	<section class="card">
+		<h2>Memory</h2>
+		<div class="membar" id="membar"></div>
+		<div class="memstats" id="memstats"></div>
+		<div class="legend">
+			<span><i style="background:var(--hot)"></i>hot</span>
+			<span><i style="background:var(--pinned)"></i>pinned</span>
+			<span><i style="background:var(--cold)"></i>cold</span>
+			<span><i style="background:repeating-linear-gradient(45deg,var(--warn),var(--warn) 3px,transparent 3px,transparent 6px)"></i>loading</span>
+			<span><i style="background:var(--ext)"></i>other processes</span>
+			<span><i style="background:var(--free);border:1px solid var(--line)"></i>free</span>
+		</div>
+	</section>
+
+	<div class="row charts">
+		<section class="card">
+			<h2>Memory, last 10 min</h2>
+			<canvas id="c-mem"></canvas>
+			<div class="chart-legend"><span><i style="background:var(--background)"></i>committed</span><span><i style="background:var(--warn)"></i>measured in use</span><span><i style="background:var(--dim)"></i>budget</span></div>
+		</section>
+		<section class="card">
+			<h2>Queue, last 10 min</h2>
+			<canvas id="c-queue"></canvas>
+			<div class="chart-legend"><span><i style="background:var(--interactive)"></i>interactive</span><span><i style="background:var(--background)"></i>background</span><span><i style="background:var(--batch)"></i>batch</span><span><i style="background:var(--ok)"></i>running</span></div>
+		</section>
+		<section class="card">
+			<h2>GPU utilization, last 10 min</h2>
+			<canvas id="c-util"></canvas>
+			<div class="chart-legend"><span><i style="background:var(--ok)"></i>utilization %</span></div>
+		</section>
+	</div>
+
+	<section class="card">
+		<h2>Models<span class="count" id="models-count"></span></h2>
+		<table>
+			<thead><tr><th>Model</th><th>State</th><th>Tier</th><th style="text-align:right">Memory</th><th>Slots</th><th style="text-align:right">Loaded</th><th style="text-align:right">Load</th><th style="text-align:right">Last used</th><th style="text-align:right" title="What evicting it would cost now: reload seconds × recent demand. The cheapest allowed models go first.">Evict cost</th><th style="text-align:right">PID</th></tr></thead>
+			<tbody id="models"></tbody>
+		</table>
+		<div class="disabled" id="disabled" hidden></div>
+	</section>
+
+	<div class="row jobs">
+		<section class="card">
+			<h2>Running<span class="count" id="running-count"></span></h2>
+			<table>
+				<thead><tr><th>Class</th><th>Model</th><th>Kind</th><th>Progress</th><th style="text-align:right">Waited</th></tr></thead>
+				<tbody id="running"></tbody>
+			</table>
+		</section>
+		<section class="card">
+			<h2>Queued<span class="count" id="queued-count"></span></h2>
+			<table>
+				<thead><tr><th>Class</th><th>Model</th><th style="text-align:right">Waiting</th><th>Why</th></tr></thead>
+				<tbody id="queued"></tbody>
+			</table>
+		</section>
+	</div>
+
+	<section class="card">
+		<div class="toolbar">
+			<h2>Events</h2>
+			<label><input type="checkbox" id="show-requests"> show per-request events (enqueue, dispatch, complete, preempt)</label>
+		</div>
+		<div class="events" id="events"></div>
+	</section>
+</main>
+<footer>Read-only view of <a href="/admin/state">/admin/state</a> · metrics at <a href="/metrics">/metrics</a> · <span id="version"></span></footer>
+
+<script>
+"use strict";
+const POLL_MS = 1000;
+const HISTORY_MS = 10 * 60 * 1000;
+// Per-request events; hidden by default so that loads, evictions, pressure
+// and mode changes stay readable under traffic.
+const REQUEST_EVENTS = new Set(["enqueue", "dispatch", "complete", "variant", "preempt", "cancel"]);
+const EVENT_LOG_MAX = 500;
+const history = [];
+// The daemon keeps only its last 100 events, and under load per-request ones
+// push loads and evictions out within seconds: the page keeps every event it
+// has seen since it was opened.
+const eventLog = new Map();
+const $ = (id) => document.getElementById(id);
+
+function esc(s) {
+	return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function gb(mb) { return (mb / 1024).toFixed(1); }
+function fmtMS(ms) { return ms < 1000 ? ms + " ms" : (ms / 1000).toFixed(1) + " s"; }
+function fmtAge(ms) {
+	if (ms < 0) ms = 0;
+	const s = ms / 1000;
+	if (s < 10) return s.toFixed(1) + "s";
+	if (s < 60) return Math.floor(s) + "s";
+	if (s < 3600) return Math.floor(s / 60) + "m" + String(Math.floor(s) % 60).padStart(2, "0") + "s";
+	return Math.floor(s / 3600) + "h" + String(Math.floor(s / 60) % 60).padStart(2, "0") + "m";
+}
+function since(now, t) {
+	if (!t || t.startsWith("0001-")) return "—";
+	return fmtAge(now - Date.parse(t)) + " ago";
+}
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function tierColor(tier) { return cssVar(tier === "hot" ? "--hot" : tier === "pinned" ? "--pinned" : "--cold"); }
+function eventClass(kind) {
+	if (["evict", "unloaded", "crash", "load_fail", "disabled", "fail", "timeout", "oom"].includes(kind)) return "k-red";
+	if (["load", "loaded", "enabled", "pressure", "thrash"].includes(kind)) return "k-yellow";
+	if (["dispatch", "complete"].includes(kind)) return "k-green";
+	if (["mode", "preempt", "variant"].includes(kind)) return "k-magenta";
+	return "";
+}
+function shortSubject(s) { return /^[0-9a-f]{16}$/.test(s) ? s.slice(0, 8) : s; }
+
+function renderHeader(st) {
+	const g = st.gpu;
+	$("device").textContent = g.name ? g.name + " · " + (g.memory_kind || "dedicated") + " memory" : "no GPU snapshot yet";
+	const mode = $("mode");
+	mode.textContent = (st.mode || "—").toUpperCase();
+	mode.className = "badge " + (st.mode || "");
+	const p = $("pressure");
+	if (g.pressure) {
+		p.hidden = false;
+		p.textContent = "memory pressure " + g.pressure;
+		p.className = "badge " + g.pressure;
+	} else {
+		p.hidden = true;
+	}
+}
+
+function renderMemory(st) {
+	const g = st.gpu, bar = $("membar");
+	const budget = g.budget_mb || 0;
+	let html = "";
+	if (budget > 0) {
+		const pct = (mb) => Math.max(0, mb) * 100 / budget;
+		for (const r of st.resident || []) {
+			const loading = r.state === "loading";
+			const style = loading ? "" : "background:" + tierColor(r.tier);
+			const label = r.id + " " + gb(r.vram_mb);
+			const wide = pct(r.vram_mb) >= 9;
+			html += `<div class="${loading ? "loading" : ""}" style="width:${pct(r.vram_mb)}%;${style}" title="${esc(label + " GB, " + r.state + ", " + r.tier)}">${wide ? esc(label) : ""}</div>`;
+		}
+		if (g.external_mb > 0) {
+			html += `<div class="external" style="width:${pct(g.external_mb)}%" title="${esc("other processes " + gb(g.external_mb) + " GB")}">${pct(g.external_mb) >= 9 ? "other " + gb(g.external_mb) : ""}</div>`;
+		}
+	}
+	bar.innerHTML = html;
+	const stats = [
+		`committed <b>${gb(g.committed_mb)} / ${gb(budget)} GB</b>`,
+		`available <b>${gb(g.available_mb)} GB</b>`,
+		`measured in use <b>${gb(g.used_mb)} GB</b> of ${gb(g.total_mb)}`,
+	];
+	if (g.external_mb > 0) stats.push(`other processes <b>${gb(g.external_mb)} GB</b>`);
+	if (g.util_pct >= 0) stats.push(`utilization <b>${g.util_pct}%</b>`);
+	if (g.memory_kind === "unified") stats.push(`swap <b>${gb(g.swap_used_mb || 0)} GB</b>`);
+	$("memstats").innerHTML = stats.map((x) => `<span>${x}</span>`).join("");
+}
+
+function renderModels(st) {
+	const now = Date.parse(st.now);
+	const rows = (st.resident || []).map((r) => {
+		const slots = Array.from({ length: r.slots }, (_, i) => `<i class="${i < r.busy_slots ? "busy" : ""}"></i>`).join("");
+		const cost = r.tier !== "pinned" && r.evict_cost >= 0.05 ? r.evict_cost.toFixed(1) : "";
+		return `<tr>
+			<td><b>${esc(r.id)}</b></td>
+			<td><span class="tag ${esc(r.state)}">${esc(r.state)}</span></td>
+			<td><span class="tag ${esc(r.tier)}">${esc(r.tier)}</span></td>
+			<td class="num" title="${r.measured ? "measured" : "estimate until the first measurement"}">${r.measured ? "" : "~"}${gb(r.vram_mb)} GB</td>
+			<td><span class="slots" title="${r.busy_slots}/${r.slots} slots busy">${slots}</span></td>
+			<td class="num">${since(now, r.loaded_at)}</td>
+			<td class="num">${r.load_seconds ? r.load_seconds.toFixed(1) + " s" : "—"}</td>
+			<td class="num">${since(now, r.last_used)}</td>
+			<td class="num">${cost}</td>
+			<td class="num">${r.pid || ""}</td>
+		</tr>`;
+	});
+	$("models").innerHTML = rows.join("") || `<tr><td colspan="10" class="empty">nothing loaded</td></tr>`;
+	$("models-count").textContent = (st.resident || []).length;
+	const dis = st.disabled_models || [];
+	$("disabled").hidden = dis.length === 0;
+	$("disabled").textContent = dis.length ? "Disabled after repeated failures: " + dis.join(", ") + " (POST /admin/models/{id}/enable)" : "";
+}
+
+function modelCell(j) {
+	if (j.family && j.model !== j.family) return `${esc(j.model)} <span class="reason">(${esc(j.family)})</span>`;
+	return esc(j.model);
+}
+
+function renderJobs(st) {
+	const running = st.running || [], queued = st.queued || [];
+	$("running").innerHTML = running.map((j) => {
+		const progress = j.steps === 1 ? "generating" : `step ${j.completed + 1}/${j.steps}`;
+		return `<tr><td><span class="tag ${esc(j.class)}">${esc(j.class)}</span></td><td>${modelCell(j)}</td><td>${esc(j.kind)}</td><td><span class="progress">▶ ${progress}</span></td><td class="num">${fmtMS(j.waited_ms)}</td></tr>`;
+	}).join("") || `<tr><td colspan="5" class="empty">nothing running</td></tr>`;
+	$("queued").innerHTML = queued.map((j) =>
+		`<tr><td><span class="tag ${esc(j.class)}">${esc(j.class)}</span></td><td>${modelCell(j)}</td><td class="num">${fmtMS(j.waited_ms)}</td><td class="reason">${esc(j.waiting_for || "")}</td></tr>`
+	).join("") || `<tr><td colspan="4" class="empty">queue empty</td></tr>`;
+	$("running-count").textContent = running.length;
+	$("queued-count").textContent = queued.length;
+}
+
+function collectEvents(st) {
+	for (const e of st.recent_events || []) {
+		const key = e.at + "|" + e.kind + "|" + e.subject + "|" + (e.detail || "");
+		if (!eventLog.has(key)) eventLog.set(key, e);
+	}
+	if (eventLog.size > EVENT_LOG_MAX) {
+		const sorted = [...eventLog.entries()].sort((a, b) => Date.parse(a[1].at) - Date.parse(b[1].at));
+		for (const [key] of sorted.slice(0, eventLog.size - EVENT_LOG_MAX)) eventLog.delete(key);
+	}
+}
+
+function renderEvents(st) {
+	const now = Date.parse(st.now);
+	const all = $("show-requests").checked;
+	const list = [...eventLog.values()]
+		.filter((e) => all || !REQUEST_EVENTS.has(e.kind))
+		.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+	$("events").innerHTML = list.map((e) =>
+		`<div class="ev"><span class="ev-time">-${fmtAge(now - Date.parse(e.at))}</span><span class="ev-kind ${eventClass(e.kind)}">${esc(e.kind)}</span><span class="ev-subject" title="${esc(e.subject)}">${esc(shortSubject(e.subject))}</span><span class="ev-detail">${esc(e.detail || "")}</span></div>`
+	).join("") || `<div class="empty">no events yet</div>`;
+}
+
+function record(st) {
+	const g = st.gpu, q = { interactive: 0, background: 0, batch: 0 };
+	for (const j of st.queued || []) q[j.class] = (q[j.class] || 0) + 1;
+	const t = Date.now();
+	history.push({ t, committed: g.committed_mb, used: g.used_mb, budget: g.budget_mb, util: g.util_pct, q, running: (st.running || []).length });
+	while (history.length && history[0].t < t - HISTORY_MS) history.shift();
+}
+
+// drawChart plots series over the last HISTORY_MS. Each series is
+// {value: sample => number, color, dash, fill}.
+function drawChart(canvas, series, maxValue, unit) {
+	const dpr = window.devicePixelRatio || 1;
+	const w = canvas.clientWidth, h = canvas.clientHeight;
+	if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+		canvas.width = Math.round(w * dpr);
+		canvas.height = Math.round(h * dpr);
+	}
+	const ctx = canvas.getContext("2d");
+	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	ctx.clearRect(0, 0, w, h);
+	const padL = 4, padR = 4, padT = 16, padB = 16;
+	const plotW = w - padL - padR, plotH = h - padT - padB;
+	const now = Date.now(), t0 = now - HISTORY_MS;
+	const x = (t) => padL + (t - t0) / HISTORY_MS * plotW;
+	const y = (v) => padT + plotH - Math.min(v, maxValue) / maxValue * plotH;
+	ctx.strokeStyle = cssVar("--line");
+	ctx.lineWidth = 1;
+	for (let i = 0; i <= 4; i++) {
+		const yy = Math.round(padT + plotH * i / 4) + 0.5;
+		ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
+	}
+	ctx.fillStyle = cssVar("--dim");
+	ctx.font = "11px ui-monospace, Menlo, monospace";
+	ctx.textBaseline = "top";
+	ctx.fillText(maxValue.toFixed(unit === "GB" ? 1 : 0) + " " + unit, padL, 1);
+	ctx.textBaseline = "bottom";
+	ctx.fillText("-10 min", padL, h - 1);
+	ctx.textAlign = "right";
+	ctx.fillText("now", w - padR, h - 1);
+	ctx.textAlign = "left";
+	if (history.length < 2) return;
+	for (const s of series) {
+		const color = cssVar(s.color);
+		ctx.beginPath();
+		history.forEach((p, i) => {
+			const px = x(p.t), py = y(s.value(p));
+			if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+		});
+		if (s.fill) {
+			ctx.save();
+			ctx.lineTo(x(history[history.length - 1].t), y(0));
+			ctx.lineTo(x(history[0].t), y(0));
+			ctx.closePath();
+			ctx.globalAlpha = 0.15;
+			ctx.fillStyle = color;
+			ctx.fill();
+			ctx.restore();
+			ctx.beginPath();
+			history.forEach((p, i) => {
+				const px = x(p.t), py = y(s.value(p));
+				if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+			});
+		}
+		ctx.strokeStyle = color;
+		ctx.lineWidth = 1.6;
+		ctx.setLineDash(s.dash ? [4, 4] : []);
+		ctx.stroke();
+		ctx.setLineDash([]);
+	}
+}
+
+function renderCharts() {
+	if (!history.length) return;
+	const memMax = Math.max(1, ...history.map((p) => Math.max(p.budget, p.committed, p.used))) / 1024;
+	drawChart($("c-mem"), [
+		{ value: (p) => p.committed / 1024, color: "--background", fill: true },
+		{ value: (p) => p.used / 1024, color: "--warn" },
+		{ value: (p) => p.budget / 1024, color: "--dim", dash: true },
+	], Math.ceil(memMax), "GB");
+	const qMax = Math.max(4, ...history.map((p) => Math.max(p.q.interactive + p.q.background + p.q.batch, p.running)));
+	drawChart($("c-queue"), [
+		{ value: (p) => p.q.interactive, color: "--interactive" },
+		{ value: (p) => p.q.background, color: "--background" },
+		{ value: (p) => p.q.batch, color: "--batch" },
+		{ value: (p) => p.running, color: "--ok", dash: true },
+	], qMax, "jobs");
+	drawChart($("c-util"), [{ value: (p) => Math.max(0, p.util), color: "--ok", fill: true }], 100, "%");
+}
+
+let lastState = null;
+function render(st) {
+	renderHeader(st);
+	renderMemory(st);
+	renderModels(st);
+	renderJobs(st);
+	renderEvents(st);
+	renderCharts();
+}
+
+async function poll() {
+	try {
+		const resp = await fetch("/admin/state", { cache: "no-store" });
+		if (!resp.ok) throw new Error("HTTP " + resp.status);
+		const st = await resp.json();
+		lastState = st;
+		record(st);
+		collectEvents(st);
+		render(st);
+		$("conn").textContent = "live · " + new Date().toLocaleTimeString();
+		$("conn").className = "conn";
+		$("main").classList.remove("stale");
+	} catch (err) {
+		$("conn").textContent = "disconnected (" + err.message + "), retrying";
+		$("conn").className = "conn down";
+		$("main").classList.add("stale");
+	}
+}
+
+async function version() {
+	try {
+		const h = await (await fetch("/health", { cache: "no-store" })).json();
+		$("version").textContent = "gridcore " + h.version;
+	} catch (_) { /* shown once the daemon answers */ }
+}
+
+$("show-requests").addEventListener("change", () => lastState && renderEvents(lastState));
+window.addEventListener("resize", renderCharts);
+version();
+poll();
+setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>
