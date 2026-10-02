@@ -162,8 +162,8 @@ func TestHotNotEvictedForBackground(t *testing.T) {
 		t.Fatalf("chat must stay resident and hot: %+v", r)
 	}
 	h.eventually(func(st State) bool {
-		return len(st.Queued) == 1 && st.Queued[0].Reason == "waiting for VRAM"
-	}, "background waits for VRAM")
+		return len(st.Queued) == 1 && st.Queued[0].Reason == "waiting for VRAM (kept: chat hot)"
+	}, "background waits for VRAM and says which model is kept")
 
 	// Once chat cools down it becomes a cold LRU victim.
 	h.clock.Advance(200 * time.Millisecond)

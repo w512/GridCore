@@ -169,9 +169,15 @@ func renderState(st scheduler.State, p palette, maxEvents int) string {
 		if !r.Measured {
 			meas = "~"
 		}
-		w("  %-16s %s%-8s%s %s%-6s%s %s %s%5s GB  slots %s\n",
+		// What losing the model would cost (reload seconds x recent demand):
+		// the cheapest allowed models are evicted first.
+		cost := ""
+		if r.Tier != "pinned" && r.EvictCost >= 0.05 {
+			cost = fmt.Sprintf("  %scost %.1f%s", p.dim, r.EvictCost, p.reset)
+		}
+		w("  %-16s %s%-8s%s %s%-6s%s %s %s%5s GB  slots %s%s\n",
 			trunc(r.ID, 16), stateCol, stateStr, p.reset, tierCol, r.Tier, p.reset,
-			modelBar(r.VRAMMB, g.BudgetMB, 20, tierCol, p), meas, gb(r.VRAMMB), slots)
+			modelBar(r.VRAMMB, g.BudgetMB, 20, tierCol, p), meas, gb(r.VRAMMB), slots, cost)
 	}
 	if len(st.Disabled) > 0 {
 		w("  %sDISABLED  %s%s\n", p.red, strings.Join(st.Disabled, ", "), p.reset)

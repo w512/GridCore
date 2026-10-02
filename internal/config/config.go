@@ -114,7 +114,24 @@ type Policy struct {
 	// guarantee (strict exclusivity). A pointer so that 0 and unset differ.
 	BackgroundMaxStarvation *time.Duration `yaml:"background_max_starvation"`
 	EmbeddingChunkSize      int            `yaml:"embedding_chunk_size"`
+	// Eviction chooses victims among the models the residency rules allow:
+	// "cost" (default) keeps the models that would be expensive to lose,
+	// weighing reload time by recent demand; "lru" evicts the least recently
+	// used first (the 0.1 behaviour).
+	Eviction string `yaml:"eviction"`
+	// MinResidency keeps models from pushing each other out on every step:
+	// batch work does not evict a model background used this recently, and
+	// a model loaded for background (batch) work is not replaced by other
+	// background (batch) work before it has been resident this long.
+	// Interactive work is not affected. Unset = 30s; "0s" disables.
+	MinResidency *time.Duration `yaml:"min_residency"`
 }
+
+// Eviction policies.
+const (
+	EvictionCost = "cost"
+	EvictionLRU  = "lru"
+)
 
 // MaxStarvation returns the effective background_max_starvation.
 func (p Policy) MaxStarvation() time.Duration {
@@ -122,6 +139,14 @@ func (p Policy) MaxStarvation() time.Duration {
 		return 3 * time.Second
 	}
 	return *p.BackgroundMaxStarvation
+}
+
+// MinResidencyOrDefault returns the effective min_residency.
+func (p Policy) MinResidencyOrDefault() time.Duration {
+	if p.MinResidency == nil {
+		return 30 * time.Second
+	}
+	return *p.MinResidency
 }
 
 type ClassPolicy struct {
@@ -247,6 +272,9 @@ func (c *Config) applyDefaults() {
 	if c.Policy.EmbeddingChunkSize == 0 {
 		c.Policy.EmbeddingChunkSize = 32
 	}
+	if c.Policy.Eviction == "" {
+		c.Policy.Eviction = EvictionCost
+	}
 }
 
 // Validate checks internal consistency. It never touches the filesystem.
@@ -347,6 +375,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Policy.BackgroundMaxStarvation != nil && *c.Policy.BackgroundMaxStarvation < 0 {
 		add("policy.background_max_starvation must be >= 0")
+	}
+	if c.Policy.Eviction != EvictionCost && c.Policy.Eviction != EvictionLRU {
+		add("policy.eviction %q: want cost or lru", c.Policy.Eviction)
+	}
+	if c.Policy.MinResidency != nil && *c.Policy.MinResidency < 0 {
+		add("policy.min_residency must be >= 0")
 	}
 
 	return errors.Join(errs...)

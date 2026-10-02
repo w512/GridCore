@@ -98,6 +98,9 @@ type Scheduler struct {
 
 	snapFailures int  // consecutive gpu snapshot failures, for log rate-limiting
 	profileErr   bool // last profile write failed (logged once)
+
+	loads    map[string][]time.Time // successful loads per model within thrashWindow
+	thrashAt map[string]time.Time   // last thrash warning per model
 }
 
 // New wires a scheduler. runtimes is keyed by config runtime name.
@@ -127,7 +130,6 @@ func New(cfg *config.Config, runtimes map[string]runtime.Runtime, mon gpu.Monito
 		events:    make(chan event, 256),
 		stopped:   make(chan struct{}),
 		q:         newQueue(),
-		res:       residency.New(cfg.Policy.Classes[job.Interactive].HotTTL),
 		jobs:      map[string]*jobState{},
 		ports:     map[string]*portAllocator{},
 		binaryIDs: map[string]string{},
@@ -135,7 +137,20 @@ func New(cfg *config.Config, runtimes map[string]runtime.Runtime, mon gpu.Monito
 		disabled:  map[string]string{},
 		ring:      newEventRing(eventBuffer),
 		mode:      "idle",
+		loads:     map[string][]time.Time{},
+		thrashAt:  map[string]time.Time{},
 	}
+	weights := map[job.Class]float64{}
+	for c, p := range cfg.Policy.Classes {
+		weights[c] = float64(p.Priority) / 100
+	}
+	s.res = residency.NewWithOptions(residency.Options{
+		HotTTL:        cfg.Policy.Classes[job.Interactive].HotTTL,
+		MinResidency:  cfg.Policy.MinResidencyOrDefault(),
+		Cost:          cfg.Policy.Eviction == config.EvictionCost,
+		ClassWeight:   weights,
+		ReloadSeconds: s.reloadSeconds,
+	})
 	for name, rc := range cfg.Runtimes {
 		if _, ok := runtimes[name]; !ok {
 			return nil, fmt.Errorf("scheduler: no runtime implementation for %q", name)

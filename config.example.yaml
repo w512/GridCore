@@ -129,9 +129,21 @@ policy:
   classes:
     # A model that served an interactive request within hot_ttl is "hot":
     # background work may not evict it.
+    # priority also weighs a class's recent requests when choosing which
+    # model to evict (see eviction).
     interactive: { priority: 100, hot_ttl: 5m }
     background:  { priority: 30 }
     batch:       { priority: 10 }
+  # Which models to evict among those the rules allow. "cost": keep the ones
+  # that would be expensive to lose (reload time x recent demand, weighted
+  # by class priority); "lru": least recently used first.
+  eviction: cost
+  # Keeps two models that do not fit together from pushing each other out
+  # on every step: batch work does not evict a model background used this
+  # recently, and background (batch) work does not replace a model loaded
+  # for background (batch) work before it has been resident this long.
+  # Interactive work is not held back. "0s" disables.
+  min_residency: 30s
   # Quiet period after the last interactive step before background may start.
   interactive_idle_before_background: 2s
   # Under continuous interactive traffic, let one background/batch step run

@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/w512/gridcore/internal/config"
 	"github.com/w512/gridcore/internal/job"
 	"github.com/w512/gridcore/internal/model"
 	"github.com/w512/gridcore/internal/residency"
@@ -180,8 +182,27 @@ func (s *Scheduler) planJobLimited(js *jobState, now time.Time, maxSteps int) {
 	case "evicting":
 		js.reason = "evicting to make room"
 	default:
-		js.reason = "waiting for VRAM"
+		js.reason = "waiting for VRAM" + s.heldBy(js.job.Class, now)
 	}
+}
+
+// heldBy names the resident models that the residency rules keep from
+// being evicted for class c, e.g. " (kept: e4b in use by background)".
+// Pinned models are left out: they are always kept.
+func (s *Scheduler) heldBy(c job.Class, now time.Time) string {
+	var held []string
+	for _, e := range s.res.All() {
+		if e.State != residency.Ready || e.Evicting {
+			continue
+		}
+		if p, why := s.res.Protected(e, c, now); p && why != "pinned" {
+			held = append(held, e.ID+" "+why)
+		}
+	}
+	if len(held) == 0 {
+		return ""
+	}
+	return " (kept: " + strings.Join(held, ", ") + ")"
 }
 
 // ensureLoaded admits a model that is not resident. It returns one of:
@@ -208,7 +229,7 @@ func (s *Scheduler) ensureLoaded(sp *model.Spec, c job.Class, now time.Time) (st
 	}
 	avail := s.availableMB()
 	if need <= avail {
-		if err := s.startLoad(sp, need, now); err != nil {
+		if err := s.startLoad(sp, need, c, now); err != nil {
 			return "", err
 		}
 		return "loading", nil
@@ -225,9 +246,21 @@ func (s *Scheduler) ensureLoaded(sp *model.Spec, c job.Class, now time.Time) (st
 		return "waiting", nil
 	}
 	for _, v := range victims {
-		s.evict(v, "make room for "+sp.ID)
+		reason := "make room for " + sp.ID
+		if s.cfg.Policy.Eviction == config.EvictionCost {
+			reason += fmt.Sprintf(", cost %.2g", s.res.Cost(v, now))
+		}
+		s.evict(v, reason)
 	}
 	return "evicting", nil
+}
+
+// reloadSeconds is the stored load time of e's model, or 0 when unknown.
+func (s *Scheduler) reloadSeconds(e *residency.Entry) float64 {
+	if p, ok := s.store.Get(s.profileKey(e.Spec)); ok {
+		return p.LoadMS / 1000
+	}
+	return 0
 }
 
 // pendingFreeMB is the footprint of entries marked for eviction that have
@@ -242,7 +275,7 @@ func (s *Scheduler) pendingFreeMB() int {
 	return n
 }
 
-func (s *Scheduler) startLoad(sp *model.Spec, needMB int, now time.Time) error {
+func (s *Scheduler) startLoad(sp *model.Spec, needMB int, c job.Class, now time.Time) error {
 	rt, ok := s.runtimes[sp.Runtime]
 	if !ok {
 		return fmt.Errorf("no runtime %q", sp.Runtime)
@@ -258,6 +291,7 @@ func (s *Scheduler) startLoad(sp *model.Spec, needMB int, now time.Time) error {
 		Port:        port,
 		VRAMMB:      needMB,
 		Slots:       sp.Parallel,
+		LoadedFor:   c,
 		LoadStarted: now,
 	}
 	s.res.Add(ent)
@@ -298,6 +332,9 @@ func (s *Scheduler) dispatch(js *jobState, ent *residency.Entry, now time.Time) 
 	js.stepStart[step] = now
 	ent.Running++
 	s.res.Touch(ent.ID, js.job.Class, now)
+	if step == 0 {
+		s.res.Use(ent.ID, js.job.Class, now) // demand counts requests, not chunks
+	}
 	if js.job.Class == job.Interactive {
 		s.runningInteractive++
 	}
@@ -433,6 +470,7 @@ func (s *Scheduler) buildState() State {
 			LoadedAt:        e.LoadedAt,
 			LastUsed:        e.LastUsed,
 			LastInteractive: e.LastInteractive,
+			EvictCost:       s.res.Cost(e, now),
 		}
 		if e.Instance != nil {
 			rm.PID = e.Instance.PID()

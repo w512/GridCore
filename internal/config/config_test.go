@@ -80,6 +80,28 @@ func TestStarvationZeroDisables(t *testing.T) {
 	}
 }
 
+func TestEvictionPolicy(t *testing.T) {
+	c, err := Parse(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Policy.Eviction != EvictionCost || c.Policy.MinResidencyOrDefault() != 30*time.Second {
+		t.Errorf("defaults: eviction=%q min_residency=%v", c.Policy.Eviction, c.Policy.MinResidencyOrDefault())
+	}
+	c, err = Parse([]byte("policy:\n  eviction: lru\n  min_residency: 0s\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Policy.Eviction != EvictionLRU || c.Policy.MinResidencyOrDefault() != 0 {
+		t.Errorf("explicit: eviction=%q min_residency=%v", c.Policy.Eviction, c.Policy.MinResidencyOrDefault())
+	}
+	for _, bad := range []string{"policy:\n  eviction: lfu\n", "policy:\n  min_residency: -1s\n"} {
+		if _, err := Parse([]byte(bad)); err == nil {
+			t.Errorf("%q should be rejected", bad)
+		}
+	}
+}
+
 func TestParseEmptyIsValid(t *testing.T) {
 	c, err := Parse(nil)
 	if err != nil {

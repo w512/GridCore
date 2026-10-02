@@ -44,6 +44,9 @@ type ResidentModel struct {
 	LoadSeconds     float64   `json:"load_seconds,omitempty"`
 	LastUsed        time.Time `json:"last_used,omitempty"`
 	LastInteractive time.Time `json:"last_interactive,omitempty"`
+	// EvictCost is what evicting the model would cost now (reload seconds x
+	// recent demand); the cheapest allowed models are evicted first.
+	EvictCost float64 `json:"evict_cost"`
 }
 
 // JobState is one queued or running job.
@@ -88,6 +91,7 @@ const (
 	EvEnabled   = "enabled"
 	EvMode      = "mode"
 	EvPreempt   = "preempt" // background/batch step deferred because of interactive mode
+	EvThrash    = "thrash"  // a model keeps being reloaded: the working set does not fit
 	EvShutdown  = "shutdown"
 	eventBuffer = 100
 )

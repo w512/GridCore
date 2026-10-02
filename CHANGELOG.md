@@ -23,6 +23,24 @@
   build, other GPU, changed model settings, model gone from the config);
   `gridcore profiles prune [--dry-run]` removes the stale ones.
 
+- Cost-based eviction (`policy.eviction: cost`, the default): among the
+  models the residency rules allow, the scheduler evicts the set that is
+  cheapest to lose — reload time times recent demand, a request count that
+  halves every 5 minutes and is weighted by class priority. Equal costs
+  fall back to LRU; `eviction: lru` restores the 0.1 order. The cost of
+  each resident model is in `/admin/state` (`evict_cost`) and `gridcore
+  status`, and `evict` events state it.
+- `policy.min_residency` (default 30s) against model thrash: batch work
+  does not evict a model background used that recently, and a model loaded
+  for background (batch) work is not replaced by other background (batch)
+  work before it has been resident that long. Interactive work is not held
+  back. In the 0.1 load test two models 200 MB over budget were reloaded
+  30 times in 5 minutes.
+- Thrash detection: a model loaded 6 times within 5 minutes produces a
+  `thrash` event, a warning with a hint and `gridcore_model_thrash_total`.
+- A job waiting for VRAM says which models are kept and why
+  (`waiting for VRAM (kept: e4b in use by background)`).
+
 ### Fixed
 - `gridcore bench` (or a prune) while the daemon was running lost its
   results: the daemon rewrote `profiles.json` from memory on its next

@@ -296,6 +296,7 @@ func (s *Scheduler) onLoaded(e evLoaded) {
 	s.event(EvLoaded, e.id, fmt.Sprintf("%.1fs pid=%d addr=%s", dur.Seconds(), e.inst.PID(), e.inst.Addr()))
 	s.log.Info("model loaded", "model", e.id, "took", dur, "addr", e.inst.Addr(), "vram_mb", ent.VRAMMB)
 	s.updateResidentGauge()
+	s.checkThrash(e.id, now)
 
 	inst := e.inst
 	go func() {
@@ -484,6 +485,38 @@ func (s *Scheduler) onAdmin(e evAdmin) error {
 		return nil
 	}
 	return fmt.Errorf("unknown admin op %q", e.op)
+}
+
+// ---- thrash ----
+
+// A model loaded thrashLoads times within thrashWindow is being pushed out
+// and brought back over and over: the models in use do not fit together.
+// The scheduler cannot fix that (min_residency only slows it down), so it
+// says so, once per window.
+const (
+	thrashWindow = 5 * time.Minute
+	thrashLoads  = 6
+)
+
+func (s *Scheduler) checkThrash(id string, now time.Time) {
+	kept := s.loads[id][:0]
+	for _, t := range s.loads[id] {
+		if now.Sub(t) < thrashWindow {
+			kept = append(kept, t)
+		}
+	}
+	s.loads[id] = append(kept, now)
+	if len(s.loads[id]) < thrashLoads {
+		return
+	}
+	if last, ok := s.thrashAt[id]; ok && now.Sub(last) < thrashWindow {
+		return
+	}
+	s.thrashAt[id] = now
+	s.m.ModelThrash.WithLabelValues(id).Inc()
+	detail := fmt.Sprintf("loaded %d times in %s: the models in use do not fit together; lower ctx or parallel of some of them, or headroom_mb", len(s.loads[id]), thrashWindow)
+	s.event(EvThrash, id, detail)
+	s.log.Warn("model thrash", "model", id, "loads", len(s.loads[id]), "window", thrashWindow)
 }
 
 // ---- breaker ----

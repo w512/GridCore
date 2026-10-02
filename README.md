@@ -47,8 +47,13 @@ closer to an operating-system scheduler: it manages *workload classes*,
   after the first load.
 - **Model residency.** Models stay loaded while they are useful. A model the
   user is actively chatting with is *hot* and cannot be evicted by background
-  work; cold models are evicted LRU-first when something else needs the room;
-  `pinned` models (embeddings) are never evicted.
+  work; `pinned` models (embeddings) are never evicted. When something else
+  needs the room, the cold models that are cheapest to lose go first: reload
+  time weighed by how often each class asked for them lately, so a model
+  used every few seconds outlives one used once a moment ago. Two models
+  that do not fit together take turns (`min_residency`) instead of pushing
+  each other out on every request, and a model that keeps coming back is
+  reported as thrash with a hint.
 - **Self-correcting.** If a load runs out of memory the stored measurement is
   discarded and the next attempt is refused up front with a clear error
   instead of crashing three more times. Repeated failures trip a circuit
