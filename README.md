@@ -361,8 +361,15 @@ Go 1.25+, no cgo, two dependencies (`yaml.v3`, `prometheus/client_golang`).
 
 ## License
 
-Copyright (c) 2026 Nick Blokhin. All rights reserved. This is proprietary
-software: no license is granted to copy, modify, distribute or use it
-without written permission. Any use is at your own risk; the software is
-provided "as is" without warranty or liability of any kind. See
-[`LICENSE`](LICENSE).
+[Prosperity Public License 3.0.0](LICENSE).
+
+- **Free for noncommercial use**: personal projects, research, study,
+  hobbies, and use by charities, schools, public research and government
+  institutions.
+- **Free commercial trial**: use at work is free for 30 days, one trial per
+  company.
+- **Paid license after the trial**: commercial use beyond 30 days needs a
+  commercial license; write to nick@blokhin.us.
+
+The software comes as is, without warranty or liability; see the license
+text for the details. Copyright (c) 2026 Nick Blokhin.

@@ -45,6 +45,8 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: ship the license with the binaries
+        run: cp LICENSE dist/LICENSE
       - name: release notes from CHANGELOG
         run: |
           awk -v tag="${GITHUB_REF_NAME#v}" '
