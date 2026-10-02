@@ -119,6 +119,13 @@ Header wins over body, body over suffix. `X-GridCore-Max-Wait-Ms` (or
 `max_wait_ms`) turns an unbounded wait into a `503 queue_timeout` with
 `Retry-After`.
 
+`interactive` is for requests a person is waiting on. A coding agent that
+works on its own should send `background`: running back to back as
+interactive it keeps the GPU in interactive mode, and everything else gets
+only `background_share` of it. On the 4060 Ti that cost the agent itself
+~10% when switched to background, while the indexer next to it did 4.6
+times more work and screenshot analysis got twice as fast.
+
 Responses carry `X-GridCore-Job-Id`, `X-GridCore-Model` (the resolved id),
 `X-GridCore-Queue-Ms` (how long the request waited for the GPU) and, for
 family requests, `X-GridCore-Family`.
