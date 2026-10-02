@@ -14,19 +14,12 @@ GridCore sits between your applications and the inference runtime and
 what runs now, what waits, which model stays resident and which one gets
 evicted to make room.
 
-```
-Apps / Agents / Desktop services
-        │  OpenAI-compatible API  (+ optional X-GridCore-* headers)
-        ▼
-┌──────────────────────────────────────────┐
-│  gridcore                                │
-│   priority queues   ·  VRAM planner      │
-│   model residency   ·  admission control │
-└───────┬──────────────┬───────────────────┘
-        ▼              ▼
-  llama-server    llama-server   ...   (one process per model)
-        └────── GPU ──────┘
-```
+<p align="center">
+  <a href="https://blokhin.us/notes/gridcore-gpu-scheduler/">
+    <img src="docs/gridcore-post-diagram.png" width="640"
+         alt="How GridCore shares one GPU: chat, a coding agent, a document indexer and a screenshot analyser call GridCore over the OpenAI API; GridCore (priority queues, VRAM accounting, model residency, admission) runs one llama-server per model, here gemma4-12b, gemma4-e4b, gemma4-e2b and nomic-embed sharing 15.5 of 16 GB on an RTX 4060 Ti">
+  </a>
+</p>
 
 It is not a model router ("which LLM is smartest for this prompt"). It is
 closer to an operating-system scheduler: it manages *workload classes*,
