@@ -37,8 +37,10 @@ closer to an operating-system scheduler: it manages *workload classes*,
 - **Three workload classes.** `interactive` always goes first. `background`
   and `batch` run when the GPU is free, are chunked, and yield between chunks
   so a chat request never waits behind an embedding job. Under continuous
-  interactive traffic background still makes progress (one small step at a
-  time), so indexing never starves.
+  interactive traffic background still makes progress, one small step at a
+  time and at most `background_share` of the time (half by default), and
+  batch never waits behind background longer than `batch_max_starvation`.
+  Nothing starves.
 - **VRAM-aware admission.** Before a model is loaded GridCore knows whether
   it fits: it reads the GGUF header and estimates weights, KV cache and
   buffers (within about 10% on tested models), honouring the llama.cpp
@@ -54,6 +56,12 @@ closer to an operating-system scheduler: it manages *workload classes*,
   that do not fit together take turns (`min_residency`) instead of pushing
   each other out on every request, and a model that keeps coming back is
   reported as thrash with a hint.
+- **Model families.** One name for several sizes of the same model. A
+  person waiting gets the best variant that can be had; background work gets
+  the one that disturbs nothing — on a busy card an ambient task lands on
+  Gemma's E4B next to the 12B the user is chatting with instead of waiting
+  for it.
+  Requests with images or audio only go to variants that take them.
 - **Self-correcting.** If a load runs out of memory the stored measurement is
   discarded and the next attempt is refused up front with a clear error
   instead of crashing three more times. Repeated failures trip a circuit
@@ -61,6 +69,9 @@ closer to an operating-system scheduler: it manages *workload classes*,
   next start.
 - **Observable.** Prometheus metrics, a JSON state endpoint, and
   `gridcore status --watch` showing what is running, queued and resident.
+  Decisions explain themselves: an eviction states what the victim cost, a
+  waiting job says which model holds the memory and why, a family request
+  says why it got the variant it got.
 
 ## Quickstart
 
@@ -133,8 +144,8 @@ family requests, `X-GridCore-Family`.
 | Class | Runs | Evicts |
 |---|---|---|
 | `interactive` | immediately if at all possible | cold models, and idle hot ones |
-| `background` | when no interactive work is active, or one step at a time after `background_max_starvation` | cold models only |
-| `batch` | like background, but only when background has nothing queued | cold models only |
+| `background` | when no interactive work is active; under constant chat one step at a time after `background_max_starvation`, at most `background_share` of the time | cold models, except one loaded for other background work less than `min_residency` ago |
+| `batch` | like background, but only when background has nothing queued — or once it has waited `batch_max_starvation` | cold models, except one background used in the last `min_residency` (until `batch_max_starvation`) |
 
 Large `/v1/embeddings` inputs are split into chunks (32 by default) and each
 chunk is a separate scheduling step; the client still gets one response.
@@ -156,8 +167,10 @@ From background work it gets the best variant that runs without evicting
 anything and without taking a slot of the model the user is chatting with:
 an ambient task next to a busy 12B lands on the E4B instead of waiting.
 `"gridcore": {"quality": "balanced"}` (or `X-GridCore-Quality`) excludes
-the tiers below; a request with an image only goes to vision variants;
-`X-GridCore-Model` in the response names the variant.
+the tiers below; a request with an image (audio) only goes to variants with
+the `vision` (`audio`) capability; `X-GridCore-Model` in the response names
+the variant. Embedding models cannot be in a family: vectors from different
+models are not comparable.
 
 ## Configuration
 
@@ -194,7 +207,11 @@ policy:
   classes:
     interactive: { hot_ttl: 5m }          # how long a model stays protected after interactive use
   interactive_idle_before_background: 2s  # quiet period before background may start
-  background_max_starvation: 3s           # bound on how long background waits under constant chat
+  background_max_starvation: 3s           # under constant chat, background waits at most this for a step...
+  background_share: 0.5                   # ...and runs alongside chat at most this share of the time
+  batch_max_starvation: 2m                # bound on how long batch waits behind background
+  eviction: cost                          # evict what is cheapest to lose (reload time x recent demand); or lru
+  min_residency: 30s                      # models that do not fit together take turns instead of thrashing
   embedding_chunk_size: 32
 ```
 
@@ -203,39 +220,60 @@ comes from. See [`config.example.yaml`](config.example.yaml) for every knob.
 
 ## What it looks like
 
-Two scenarios from a 16 GB RTX 4060 Ti with real models
-(`scripts/demo-background-vs-interactive.sh`, `scripts/demo-eviction.sh`):
+Three scenarios from a 16 GB RTX 4060 Ti with real models. The first two
+are `scripts/demo-background-vs-interactive.sh` and `scripts/demo-eviction.sh`:
 
 ```
 Start background indexing: 1000 documents in 32-document chunks
 150 ms later a user starts chatting
-   interactive gemma4-12b     HTTP 200  1.23s  queue     0ms  A GPU scheduler manages and coordinates ...
+   interactive gemma4-12b     HTTP 200  1.21s  queue     0ms  A GPU scheduler manages the execution of ...
 Indexing finishes after the chat
-   background  nomic-embed    HTTP 200  4.04s  items=1000
+   background  nomic-embed    HTTP 200  4.08s  items=1000
 
-   11:20:27.194 enqueue   background embedding nomic-embed steps=32
-   11:20:27.194 dispatch  background step 1/32 -> nomic-embed
-   11:20:27.500 enqueue   interactive chat gemma4-12b steps=1
-   11:20:27.500 dispatch  interactive step 1/1 -> gemma4-12b
-   11:20:27.500 mode      gpu              interactive
-   11:20:28.731 complete  interactive gemma4-12b
-   11:20:30.833 mode      gpu              idle
-   11:20:31.032 dispatch  background step 32/32 -> nomic-embed
-   11:20:31.078 complete  background nomic-embed
+   17:45:26.360 enqueue   background embedding nomic-embed steps=32
+   17:45:26.360 dispatch  background step 1/32 -> nomic-embed
+   17:45:26.664 enqueue   interactive chat gemma4-12b steps=1
+   17:45:26.664 dispatch  interactive step 1/1 -> gemma4-12b
+   17:45:26.664 mode      gpu              interactive
+   17:45:27.876 complete  interactive gemma4-12b
+   17:45:29.988 mode      gpu              idle
+   17:45:30.188 dispatch  background step 32/32 -> nomic-embed
+   17:45:30.237 complete  background nomic-embed
 ```
 
 ```
 Interactive request for qwen3-14b: does not fit next to gemma4-12b -> evict (it is idle), load, run
-   interactive qwen3-14b      HTTP 200  2.35s  queue  1789ms  Sure! Here are three colors: 1. Red 2. ...
+   interactive qwen3-14b      HTTP 200  4.91s  queue  4382ms  1. Red   2. Blue   3. Green
 Now qwen3-14b is hot. A background request for gemma4-12b must NOT evict it: it waits and times out
-   background  gemma4-12b     HTTP 503  3.01s  (max_wait 3s)
+   background  gemma4-12b     HTTP 503  3.18s  (max_wait 3s)
 
-   11:20:33.057 evict     gemma4-12b       make room for qwen3-14b (running=0)
-   11:20:33.237 unloaded  gemma4-12b       evicted
-   11:20:33.237 load      qwen3-14b        reserve 9732 MB port=41002
-   11:20:34.847 loaded    qwen3-14b        1.6s pid=228902 addr=127.0.0.1:41002
-   11:20:34.847 dispatch  interactive step 1/1 -> qwen3-14b
-   11:20:38.434 timeout   max_wait exceeded while queued
+   17:45:32.280 evict     gemma4-12b       make room for qwen3-14b, cost 6 (running=0)
+   17:45:32.454 unloaded  gemma4-12b       evicted
+   17:45:32.454 load      qwen3-14b        reserve 9732 MB port=41002
+   17:45:36.663 loaded    qwen3-14b        4.2s pid=53918 addr=127.0.0.1:41002
+   17:45:36.663 dispatch  interactive step 1/1 -> qwen3-14b
+   17:45:40.388 timeout   max_wait exceeded while queued
+```
+
+The third uses the `gemma4` family. A user chats with it, a coding agent
+works on Ornith-35B (a mixture-of-experts model with its experts in host
+RAM, 2.3 GB of VRAM), and a screenshot analyser sends an image to `gemma4`
+as background work. The scheduler waits for the chat to go quiet (2 s),
+then picks the E4B variant because it fits in free memory and the 12B is in
+use by the chat. Nothing is evicted; four models share the card:
+
+```
+   interactive gemma4      -> gemma4-12b  HTTP 200  2.39s  queue  2001ms  Hello, how are you today?
+   interactive ornith-35b  -> ornith-35b  HTTP 200  2.26s  queue  1802ms  One Go keyword is `package`.
+   background  gemma4      -> gemma4-e4b  HTTP 200  3.83s  queue  3584ms  Blue box with invoice number.
+
+   17:44:13.075 variant   dd24eb03e5049daa gemma4 -> gemma4-12b (fits in free VRAM)
+   17:44:13.075 load      gemma4-12b       reserve 8488 MB port=41001
+   17:44:15.494 load      ornith-35b       reserve 2330 MB port=41002
+   17:44:17.778 enqueue   580b6993e0e6e778 background chat gemma4 steps=1
+   17:44:19.760 variant   580b6993e0e6e778 gemma4 -> gemma4-e4b (fits in free VRAM); gemma4-12b resident, in interactive use
+   17:44:19.760 load      gemma4-e4b       reserve 4118 MB port=41003
+   17:44:21.594 complete  580b6993e0e6e778 background gemma4-e4b
 ```
 
 To watch it live, `scripts/demo-tmux.sh` opens a tmux layout with the
@@ -247,24 +285,38 @@ first, so it works on any laptop):
 scripts/demo-tmux.sh --fake
 ```
 
-`gridcore status --watch`:
+`gridcore status --watch` (`cost` is what evicting the model would cost
+now; the cheapest go first):
 
 ```
-11:08:12  mode=idle
-GPU NVIDIA GeForce RTX 4060 Ti [###################.]  15.5 / 16.0 GB  committed 15.5  util 0%
+gridcore  17:46:03  IDLE
+NVIDIA GeForce RTX 4060 Ti  [████████████████████████████··] 15.0 / 15.7 GB  util   0%
 
 RESIDENT
-  gemma4-12b       ready    hot       8.3 GB  slots 0/2
-  gemma4-e2b       ready    cold      2.8 GB  slots 0/4
-  gemma4-e4b       ready    cold      4.0 GB  slots 0/2
-  nomic-embed      ready    pinned    0.4 GB  slots 0/4
+  gemma4-12b       ready    hot    ▇▇▇▇▇▇▇▇▇▇░░░░░░░░░░   8.3 GB  slots 0/2  cost 7.8
+  gemma4-e4b       ready    cold   ▇▇▇▇▇░░░░░░░░░░░░░░░   4.0 GB  slots 0/2  cost 0.6
+  nomic-embed      ready    pinned ▇░░░░░░░░░░░░░░░░░░░   0.4 GB  slots 0/4
+  ornith-35b       ready    hot    ▇▇░░░░░░░░░░░░░░░░░░   2.2 GB  slots 0/2  cost 2.1
 ```
 
-Under a 5-minute mixed load (6 chatting clients, 8 background, 4 batch, 2
-embedding) on that card, every class made progress and no request failed;
-interactive p50 was 3.4 s for 32-token answers from a 12B model while
-background steps ran alongside. Measurements of seven models on that card
-informed the defaults in [`config.example.yaml`](config.example.yaml).
+Under load on that card:
+
+- **Mixed load** (6 chatting clients, 8 background, 4 batch, 2 embedding;
+  4 minutes): every class made progress and no request failed. Interactive
+  p50 was 2.7 s for 32-token answers from the 12B while background ran
+  alongside; with `background_share: 1` (the v0.1 behaviour) it was 4.0 s
+  and background did twice as much.
+- **Two models that do not fit together** (E4B for background, E2B for
+  batch, 200 MB over budget): v0.1 reloaded them 60 times in 5 minutes;
+  v0.2 five times. Background answered 109 requests instead of 78, batch
+  still got its turn, and chat was faster (p50 2.7 s instead of 3.0 s).
+- **One GPU, five kinds of work** (chat, a coding agent, screenshot
+  analysis every 5 s, a file indexer, OCR; `scripts/loadtest -scenario
+  ambient`, 5 minutes): all five made progress with two model loads and no
+  evictions.
+
+Measurements of eleven model variants on that card informed the defaults in
+[`config.example.yaml`](config.example.yaml).
 
 ## Commands
 
@@ -287,13 +339,14 @@ Run it as a service with [`deploy/gridcore.service`](deploy/gridcore.service)
 
 ## Status and scope
 
-v0.1: one NVIDIA GPU, llama.cpp as the runtime, three classes, residency
-and admission as described above. Tested on Ubuntu 24.04 with an RTX 4060 Ti.
+v0.2: one NVIDIA GPU, llama.cpp as the runtime, three classes, residency
+with cost-based eviction, model families, admission as described above.
+Tested on Ubuntu 24.04 with an RTX 4060 Ti 16 GB and llama.cpp b11060.
+See [`CHANGELOG.md`](CHANGELOG.md) for what changed since v0.1.
 
-Deliberately not in v0.1: cloud fallback, automatic quality tiers (pick a
-smaller variant of the same model under pressure), preempting a chat
-mid-generation, vLLM/MLX runtimes, AMD GPUs, multiple GPUs, authentication.
-The architecture has room for all of them.
+Deliberately not yet: cloud fallback, preempting a chat mid-generation,
+vLLM/MLX runtimes, AMD GPUs, unified-memory machines, multiple GPUs,
+authentication, a web dashboard. The architecture has room for all of them.
 
 ## Building
 

@@ -1,8 +1,60 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-10-02
+
+Smarter residency on one card: models are evicted by what they would cost
+to lose, models that do not fit together take turns instead of thrashing,
+no class starves, and a request can name a model family and get the variant
+that fits the moment. Measured on an RTX 4060 Ti 16 GB with llama.cpp b11060.
 
 ### Added
+- Model families (`families:` with `preferred` / `balanced` / `compact`
+  tiers and aliases). Interactive work gets the best variant it can have
+  (evicting as for a plain model, falling back only when the better ones
+  cannot be made resident); background and batch work get the best variant
+  that runs without evicting anything or sharing the model the user is
+  chatting with. `"gridcore": {"quality": ...}` / `X-GridCore-Quality`
+  excludes lower tiers; requests with images (audio) only go to variants
+  with the `vision` (new: `audio`) capability. Responses name the variant
+  (`X-GridCore-Model`, `X-GridCore-Family`); `variant` events explain the
+  choice; `gridcore_variant_selected_total{family,variant,class}`;
+  `/v1/models` lists families with their variants.
+- Cost-based eviction (`policy.eviction: cost`, the default): among the
+  models the residency rules allow, the scheduler evicts the set that is
+  cheapest to lose — reload time times recent demand, a request count that
+  halves every 5 minutes and is weighted by class priority. Equal costs
+  fall back to LRU; `eviction: lru` restores the 0.1 order. Each resident
+  model's cost is in `/admin/state` (`evict_cost`) and `gridcore status`,
+  and `evict` events state it.
+- `policy.min_residency` (default 30s) against model thrash: batch work
+  does not evict a model background used that recently, and a model loaded
+  for background (batch) work is not replaced by other background (batch)
+  work before it has been resident that long. Interactive work is not held
+  back. Two models 200 MB over budget were reloaded 60 times in 5 minutes by
+  0.1, 5 times by 0.2.
+- `policy.background_share` (default 0.5) caps how much of the time under
+  continuous interactive load background/batch steps run alongside it:
+  after a step of length d the next one waits d·(1/share − 1), so steps of
+  any length add up to the share. With six chatting clients it took chat
+  p50 from 4.0 s to 2.7 s (p95 4.8 → 3.5 s) and halved background
+  throughput while the chat lasted; `1` is the 0.1 behaviour.
+- `policy.batch_max_starvation` (default 2m): a batch job that has made no
+  progress for this long gets one step even while background has work
+  queued, and may take a model background is using (never a hot or pinned
+  one). `0s` restores strict ordering.
+- Thrash detection: a model loaded 6 times within 5 minutes produces a
+  `thrash` event, a warning with a hint and `gridcore_model_thrash_total`.
+- A job waiting for VRAM says which models are kept and why
+  (`waiting for VRAM (kept: e4b in use by background)`); a job held back by
+  the share says when its next step may run.
+- `gridcore profiles` lists stored measurements and says which ones the
+  scheduler would use and why the others no longer apply (other runtime
+  build, other GPU, changed model settings, model gone from the config);
+  `gridcore profiles prune [--dry-run]` removes the stale ones.
+- `scripts/loadtest -scenario ambient`: chat, a coding agent, screenshot
+  analysis, a file indexer and OCR on one GPU, with per-role latency, the
+  model that served each role, and loads / evictions / thrash from
+  `/metrics`.
 - VRAM estimate honours the llama.cpp offload flags in a model's args
   (`-ngl` / `--n-gpu-layers`, `--cpu-moe`, `--n-cpu-moe`, `-ot <regex>=CPU`)
   and skips multi-token-prediction blocks, so models larger than the card
@@ -16,54 +68,23 @@
   LLM classification load with a progress bar that visibly pauses);
   `scripts/demo-tmux.sh` opens the demo layout (`--fake` works without a
   GPU); `scripts/gpu-watch.sh` lists GPU processes by GridCore model.
-- `config.example.yaml`: Qwen3.8-27B (IQ4_XS on the GPU, Q4_K_M with one
-  layer on the CPU) and Ornith-1.5-35B-A3B with experts in RAM.
-- `gridcore profiles` lists stored measurements and says which ones the
-  scheduler would use and why the others no longer apply (other runtime
-  build, other GPU, changed model settings, model gone from the config);
-  `gridcore profiles prune [--dry-run]` removes the stale ones.
+- `config.example.yaml`: a `gemma4` family, Qwen3.8-27B (IQ4_XS on the GPU,
+  Q4_K_M with one layer on the CPU) and Ornith-1.5-35B-A3B with experts in
+  RAM; `examples/fake-demo.yaml`: a `qwen3` family to try without a GPU.
 
-- Cost-based eviction (`policy.eviction: cost`, the default): among the
-  models the residency rules allow, the scheduler evicts the set that is
-  cheapest to lose — reload time times recent demand, a request count that
-  halves every 5 minutes and is weighted by class priority. Equal costs
-  fall back to LRU; `eviction: lru` restores the 0.1 order. The cost of
-  each resident model is in `/admin/state` (`evict_cost`) and `gridcore
-  status`, and `evict` events state it.
-- `policy.min_residency` (default 30s) against model thrash: batch work
-  does not evict a model background used that recently, and a model loaded
-  for background (batch) work is not replaced by other background (batch)
-  work before it has been resident that long. Interactive work is not held
-  back. In the 0.1 load test two models 200 MB over budget were reloaded
-  30 times in 5 minutes.
-- `policy.batch_max_starvation` (default 2m): a batch job that has made no
-  progress for this long gets one step even while background has work
-  queued, and may take a model background is using (never a hot or pinned
-  one). Without it, on the 4060 Ti batch got nothing in 5 minutes when its
-  model did not fit next to a busy background model. `0s` restores strict
-  ordering.
-- Thrash detection: a model loaded 6 times within 5 minutes produces a
-  `thrash` event, a warning with a hint and `gridcore_model_thrash_total`.
-- Model families (`families:` with `preferred` / `balanced` / `compact`
-  tiers and aliases): a request for the family is served by the best
-  variant interactive work can have (evicting as for a plain model, falling
-  back only when the better ones cannot be made resident), or by the best
-  variant background and batch work can run without evicting anything or
-  sharing the model the user is chatting with. `"gridcore": {"quality":
-  ...}` / `X-GridCore-Quality` excludes lower tiers, requests with images
-  (audio) only go to variants with the `vision` (`audio`) capability, and
-  the response names the variant
-  (`X-GridCore-Model`, `X-GridCore-Family`). `variant` events and
-  `gridcore_variant_selected_total{family,variant,class}` show the choices;
-  `/v1/models` lists families with their variants.
-- `policy.background_share` caps how much of the time under continuous
-  interactive load background/batch steps run alongside it: after a step of
-  length d the next one waits d·(1/share − 1), so steps of any length add
-  up to the share. The default is 0.5: on the 4060 Ti with six chatting
-  clients it took chat p50 from 4.0 s to 2.7 s (p95 4.8 → 3.5 s) and halved
-  background throughput while the chat lasted; `1` is the 0.1 behaviour.
-- A job waiting for VRAM says which models are kept and why
-  (`waiting for VRAM (kept: e4b in use by background)`).
+### Changed
+- Measured profiles are keyed by the llama.cpp build (`llama-server
+  --version`: build number, commit, GPU backend) instead of the binary's
+  path, mtime and size, so reinstalling or redeploying the same build keeps
+  them. Profiles recorded by 0.1.0 for the binary that is installed now are
+  carried over on start; `gridcore profiles prune` removes the old entries.
+- README: a coding agent that works on its own should send `background`.
+  In the acceptance scenario that cost the agent ~10% and gave the indexer
+  next to it 4.6 times the throughput.
+- CI and release builds use the Go toolchain pinned in `go.mod`
+  (`toolchain go1.26.3`) instead of Go 1.25.0; the minimum Go for building
+  from source is still 1.25. GitHub Actions moved to Node 24 releases.
+- `make deploy` checks for `rsync` and `HOST` before building.
 
 ### Fixed
 - `gridcore bench` (or a prune) while the daemon was running lost its
@@ -77,17 +98,6 @@
 - The orphan reaper identifies processes by command line and port instead
   of `/proc/<pid>/exe`, which pointed at the interpreter for wrapped
   runtimes and leaked the child.
-
-### Changed
-- Measured profiles are keyed by the llama.cpp build (`llama-server
-  --version`: build number, commit, GPU backend) instead of the binary's
-  path, mtime and size, so reinstalling or redeploying the same build keeps
-  them. Profiles recorded by 0.1.0 for the binary that is installed now are
-  carried over on start; `gridcore profiles prune` removes the old entries.
-- CI and release builds use the Go toolchain pinned in `go.mod`
-  (`toolchain go1.26.3`) instead of Go 1.25.0; the minimum Go for building
-  from source is still 1.25. GitHub Actions moved to Node 24 releases.
-- `make deploy` checks for `rsync` and `HOST` before building.
 
 ## 0.1.0 — 2026-09-13
 
