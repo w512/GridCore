@@ -50,8 +50,14 @@ type live struct {
 
 func newLive(t *testing.T) *live {
 	t.Helper()
+	return newLiveWith(t, "")
+}
+
+// newLiveWith appends extra top-level YAML (e.g. families) to liveYAML.
+func newLiveWith(t *testing.T, extra string) *live {
+	t.Helper()
 	lo := int(portBase.Add(50))
-	cfg, err := config.Parse([]byte(fmt.Sprintf(liveYAML, lo, lo+49)))
+	cfg, err := config.Parse([]byte(fmt.Sprintf(liveYAML, lo, lo+49) + extra))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,5 +497,48 @@ func TestCancelRaceDoesNotLeakSlots(t *testing.T) {
 			t.Fatalf("leaked after cancel race: busy=%d running=%d queued=%d", busy, len(st.Running), len(st.Queued))
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A family request is answered by the variant the scheduler picked: the
+// headers name it and the forwarded body targets it.
+func TestFamilyRequest(t *testing.T) {
+	l := newLiveWith(t, "families:\n  fam: { preferred: chat, compact: slow, aliases: [default-chat] }\n")
+
+	resp := l.post(t, "/v1/chat/completions", `{"model":"default-chat","messages":[{"role":"user","content":"hi"}]}`, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d: %s", resp.StatusCode, errCode(t, resp))
+	}
+	if resp.Header.Get(HeaderModel) != "chat" || resp.Header.Get(HeaderFamily) != "fam" {
+		t.Errorf("interactive on an idle GPU should get the preferred variant: model=%q family=%q",
+			resp.Header.Get(HeaderModel), resp.Header.Get(HeaderFamily))
+	}
+	out := readJSON(t, resp)
+	msg := out["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
+	if msg["content"] != "ok from chat" || out["model"] != "chat" {
+		t.Errorf("answered by %v (%v)", out["model"], msg["content"])
+	}
+
+	// Streaming through a family works the same way.
+	resp = l.post(t, "/v1/chat/completions", `{"model":"fam","stream":true,"messages":[]}`, map[string]string{HeaderQuality: "preferred"})
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get(HeaderModel) != "chat" || !strings.Contains(string(body), "[DONE]") {
+		t.Errorf("stream: status=%d model=%q body=%q", resp.StatusCode, resp.Header.Get(HeaderModel), body)
+	}
+
+	resp, err := http.Get(l.ts.URL + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, d := range readJSON(t, resp)["data"].([]any) {
+		m := d.(map[string]any)
+		if m["id"] == "fam" {
+			found = fmt.Sprint(m["variants"]) == "[chat slow]"
+		}
+	}
+	if !found {
+		t.Error("/v1/models should list the family with its variants")
 	}
 }

@@ -131,5 +131,5 @@ type jobState struct {
 func (js *jobState) remaining() int { return js.job.Steps - js.dispatched }
 
 func (js *jobState) String() string {
-	return fmt.Sprintf("%s(%s %s %s %d/%d)", js.job.ID, js.job.Class, js.job.Kind, js.job.ModelID, js.completed, js.job.Steps)
+	return fmt.Sprintf("%s(%s %s %s %d/%d)", js.job.ID, js.job.Class, js.job.Kind, js.job.Target(), js.completed, js.job.Steps)
 }

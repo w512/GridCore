@@ -73,6 +73,12 @@ type Job struct {
 	MaxWait  time.Duration // 0 = unbounded
 	Enqueued time.Time
 
+	// Family requests name a model family instead of a model. Variants are
+	// the models that may serve it, best first; ModelID stays empty until
+	// the scheduler picks one, and is fixed from then on.
+	Family   string
+	Variants []string
+
 	// Steps is the number of schedulable units (1 for chat/completion,
 	// ceil(len(input)/chunk) for embeddings). Completed counts finished steps.
 	Steps     int
@@ -96,6 +102,28 @@ func New(id string, ctx context.Context, class Class, kind Kind, modelID string)
 		Steps:    1,
 		Ctx:      ctx,
 		State:    Queued,
+	}
+}
+
+// NewFamily creates a queued job for a model family; the scheduler picks
+// one of variants (best first).
+func NewFamily(id string, ctx context.Context, class Class, kind Kind, family string, variants []string) *Job {
+	j := New(id, ctx, class, kind, "")
+	j.Family = family
+	j.Variants = append([]string(nil), variants...)
+	return j
+}
+
+// Target is what the job asks for: the model, or the family until a
+// variant is picked ("gemma4" / "gemma4:gemma4-e4b").
+func (j *Job) Target() string {
+	switch {
+	case j.Family == "":
+		return j.ModelID
+	case j.ModelID == "":
+		return j.Family
+	default:
+		return j.Family + ":" + j.ModelID
 	}
 }
 

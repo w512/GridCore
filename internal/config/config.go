@@ -45,6 +45,7 @@ type Config struct {
 	GPU      GPU                `yaml:"gpu"`
 	Runtimes map[string]Runtime `yaml:"runtimes"`
 	Models   map[string]Model   `yaml:"models"`
+	Families map[string]Family  `yaml:"families"`
 	Policy   Policy             `yaml:"policy"`
 
 	// StateDir is where profiles.json and child logs live. Not set from YAML;
@@ -101,6 +102,56 @@ type Model struct {
 	// describe a model's footprint without a file on disk.
 	FakeVRAMMB int           `yaml:"fake_vram_mb"`
 	FakeLoad   time.Duration `yaml:"fake_load_time"`
+}
+
+// Family groups variants of one model (sizes or quants of the same weights,
+// one prompt format) under one name. A request for the family is served by
+// the variant the scheduler can run with the least disruption, never below
+// the quality the request asks for. Each tier names one configured model;
+// at least one tier is required.
+type Family struct {
+	Preferred string   `yaml:"preferred"`
+	Balanced  string   `yaml:"balanced"`
+	Compact   string   `yaml:"compact"`
+	Aliases   []string `yaml:"aliases"`
+}
+
+// Quality is the minimum tier a family request accepts.
+type Quality string
+
+const (
+	QualityPreferred Quality = "preferred"
+	QualityBalanced  Quality = "balanced"
+	QualityCompact   Quality = "compact"
+)
+
+// ParseQuality validates a user-supplied quality ("" = compact, any tier).
+func ParseQuality(s string) (Quality, error) {
+	switch q := Quality(s); q {
+	case "":
+		return QualityCompact, nil
+	case QualityPreferred, QualityBalanced, QualityCompact:
+		return q, nil
+	}
+	return "", fmt.Errorf("unknown quality %q (want preferred, balanced or compact)", s)
+}
+
+// Variants returns the family's models best first, down to and including
+// tier min.
+func (f Family) Variants(min Quality) []string {
+	var out []string
+	for _, t := range []struct {
+		q  Quality
+		id string
+	}{{QualityPreferred, f.Preferred}, {QualityBalanced, f.Balanced}, {QualityCompact, f.Compact}} {
+		if t.id != "" {
+			out = append(out, t.id)
+		}
+		if t.q == min {
+			break
+		}
+	}
+	return out
 }
 
 type Policy struct {
@@ -374,6 +425,46 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	for _, id := range sortedKeys(c.Families) {
+		f := c.Families[id]
+		if strings.Contains(id, "@") {
+			add("families.%s: id must not contain '@' (reserved for class suffix)", id)
+		}
+		if prev, dup := seen[id]; dup {
+			add("families.%s: name already used by %s", id, prev)
+		}
+		seen[id] = "family " + id
+		variants := f.Variants(QualityCompact)
+		if len(variants) == 0 {
+			add("families.%s: set at least one of preferred, balanced, compact", id)
+		}
+		inFamily := map[string]bool{}
+		for _, v := range variants {
+			m, ok := c.Models[v]
+			if !ok {
+				add("families.%s: variant %q is not a configured model", id, v)
+				continue
+			}
+			if inFamily[v] {
+				add("families.%s: %q is listed twice", id, v)
+			}
+			inFamily[v] = true
+			if m.HasCapability(CapEmbedding) {
+				add("families.%s: %q is an embedding model; vectors from different models are not comparable, so embeddings cannot be served by a family", id, v)
+			}
+		}
+		for _, a := range f.Aliases {
+			if strings.Contains(a, "@") {
+				add("families.%s.aliases: %q must not contain '@'", id, a)
+			}
+			if prev, dup := seen[a]; dup {
+				add("families.%s.aliases: %q already used by %s", id, a, prev)
+				continue
+			}
+			seen[a] = "family " + id
+		}
+	}
+
 	if _, ok := c.Policy.Classes[c.Policy.DefaultClass]; !ok {
 		add("policy.default_class %q is not a known class", c.Policy.DefaultClass)
 	}
@@ -439,6 +530,21 @@ func (c *Config) ResolveModel(name string) (string, bool) {
 	}
 	for id, m := range c.Models {
 		for _, a := range m.Aliases {
+			if a == name {
+				return id, true
+			}
+		}
+	}
+	return "", false
+}
+
+// ResolveFamily maps a user-facing name (family id or alias) to a family id.
+func (c *Config) ResolveFamily(name string) (string, bool) {
+	if _, ok := c.Families[name]; ok {
+		return name, true
+	}
+	for id, f := range c.Families {
+		for _, a := range f.Aliases {
 			if a == name {
 				return id, true
 			}

@@ -38,6 +38,17 @@
   30 times in 5 minutes.
 - Thrash detection: a model loaded 6 times within 5 minutes produces a
   `thrash` event, a warning with a hint and `gridcore_model_thrash_total`.
+- Model families (`families:` with `preferred` / `balanced` / `compact`
+  tiers and aliases): a request for the family is served by the best
+  variant interactive work can have (evicting as for a plain model, falling
+  back only when the better ones cannot be made resident), or by the best
+  variant background and batch work can run without evicting anything or
+  sharing the model the user is chatting with. `"gridcore": {"quality":
+  ...}` / `X-GridCore-Quality` excludes lower tiers, requests with images
+  only go to vision variants, and the response names the variant
+  (`X-GridCore-Model`, `X-GridCore-Family`). `variant` events and
+  `gridcore_variant_selected_total{family,variant,class}` show the choices;
+  `/v1/models` lists families with their variants.
 - `policy.background_share` caps how much of the time under continuous
   interactive load background/batch steps run alongside it: after a step of
   length d the next one waits d·(1/share − 1), so steps of any length add

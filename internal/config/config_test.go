@@ -323,3 +323,65 @@ func TestExampleConfigIsValid(t *testing.T) {
 		t.Errorf("example should define 3 models, got %d", len(c.Models))
 	}
 }
+
+const familyModels = `
+runtimes:
+  sim: {type: fake}
+models:
+  big:   {runtime: sim, capabilities: [chat, vision], fake_vram_mb: 8000, aliases: [gpt-4o]}
+  mid:   {runtime: sim, capabilities: [chat, vision], fake_vram_mb: 4000}
+  small: {runtime: sim, capabilities: [chat], fake_vram_mb: 3000}
+  embed: {runtime: sim, capabilities: [embedding], fake_vram_mb: 400}
+`
+
+func TestFamilies(t *testing.T) {
+	c, err := Parse([]byte(familyModels + `
+families:
+  gemma: {preferred: big, balanced: mid, compact: small, aliases: [default-chat]}
+  two:   {preferred: big, compact: small}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := c.Families["gemma"]
+	for q, want := range map[Quality]string{
+		QualityPreferred: "big", QualityBalanced: "big,mid", QualityCompact: "big,mid,small",
+	} {
+		if got := strings.Join(f.Variants(q), ","); got != want {
+			t.Errorf("Variants(%s) = %s, want %s", q, got, want)
+		}
+	}
+	if got := strings.Join(c.Families["two"].Variants(QualityBalanced), ","); got != "big" {
+		t.Errorf("a missing tier is skipped: balanced of {big, small} = %s, want big", got)
+	}
+	if id, ok := c.ResolveFamily("default-chat"); !ok || id != "gemma" {
+		t.Errorf("alias resolution = %q %v", id, ok)
+	}
+	if _, ok := c.ResolveFamily("big"); ok {
+		t.Error("a model id is not a family")
+	}
+	if q, err := ParseQuality(""); err != nil || q != QualityCompact {
+		t.Errorf(`ParseQuality("") = %q %v`, q, err)
+	}
+	if _, err := ParseQuality("best"); err == nil {
+		t.Error("unknown quality must be rejected")
+	}
+}
+
+func TestFamilyValidation(t *testing.T) {
+	cases := map[string]string{
+		"empty":                    "  f: {}\n",
+		"unknown variant":          "  f: {preferred: nope}\n",
+		"embedding":                "  f: {preferred: embed}\n",
+		"twice":                    "  f: {preferred: big, compact: big}\n",
+		"clashes model":            "  big: {preferred: mid}\n",
+		"clashes alias":            "  f: {preferred: mid, aliases: [gpt-4o]}\n",
+		"at in id":                 "  f@x: {preferred: mid}\n",
+		"two families, same alias": "  f: {preferred: mid, aliases: [x]}\n  g: {preferred: small, aliases: [x]}\n",
+	}
+	for name, fam := range cases {
+		if _, err := Parse([]byte(familyModels + "families:\n" + fam)); err == nil {
+			t.Errorf("%s: should be rejected", name)
+		}
+	}
+}

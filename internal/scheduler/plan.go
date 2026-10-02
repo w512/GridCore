@@ -151,6 +151,9 @@ func (s *Scheduler) planJobLimited(js *jobState, now time.Time, maxSteps int) {
 	if js.failed || js.remaining() == 0 {
 		return
 	}
+	if js.job.ModelID == "" && !s.pickVariant(js, now) {
+		return
+	}
 	id := js.job.ModelID
 	if reason, off := s.disabled[id]; off {
 		s.fail(js, fmt.Errorf("%w: %s", ErrModelDisabled, reason), "disabled")
@@ -510,11 +513,16 @@ func (s *Scheduler) jobState(js *jobState, now time.Time) JobState {
 	if !js.firstGrant.IsZero() {
 		waited = js.firstGrant.Sub(js.job.Enqueued)
 	}
+	model := js.job.ModelID
+	if model == "" {
+		model = js.job.Family
+	}
 	out := JobState{
 		ID:         js.job.ID,
 		Class:      string(js.job.Class),
 		Kind:       string(js.job.Kind),
-		Model:      js.job.ModelID,
+		Model:      model,
+		Family:     js.job.Family,
 		State:      string(js.job.State),
 		Enqueued:   js.job.Enqueued,
 		WaitedMS:   waited.Milliseconds(),

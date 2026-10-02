@@ -54,7 +54,8 @@ type JobState struct {
 	ID         string    `json:"id"`
 	Class      string    `json:"class"`
 	Kind       string    `json:"kind"`
-	Model      string    `json:"model"`
+	Model      string    `json:"model"`            // the family until a variant is picked
+	Family     string    `json:"family,omitempty"` // family requests only
 	State      string    `json:"state"`
 	Enqueued   time.Time `json:"enqueued"`
 	WaitedMS   int64     `json:"waited_ms"` // queue time so far (queued) or until first grant (running)
@@ -92,6 +93,7 @@ const (
 	EvMode      = "mode"
 	EvPreempt   = "preempt" // background/batch step deferred because of interactive mode
 	EvThrash    = "thrash"  // a model keeps being reloaded: the working set does not fit
+	EvVariant   = "variant" // a family request was given one of its variants
 	EvShutdown  = "shutdown"
 	eventBuffer = 100
 )

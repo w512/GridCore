@@ -238,8 +238,20 @@ func (s *Scheduler) Submit(j *job.Job) (*Handle, error) {
 	if j.Steps < 1 {
 		return nil, errors.New("scheduler: job must have at least one step")
 	}
-	if _, ok := s.specs[j.ModelID]; !ok {
-		return nil, fmt.Errorf("scheduler: unknown model %q", j.ModelID)
+	switch {
+	case j.Family != "" && j.ModelID == "":
+		if len(j.Variants) == 0 {
+			return nil, fmt.Errorf("scheduler: family %q job has no variants", j.Family)
+		}
+		for _, v := range j.Variants {
+			if _, ok := s.specs[v]; !ok {
+				return nil, fmt.Errorf("scheduler: unknown model %q in family %q", v, j.Family)
+			}
+		}
+	default:
+		if _, ok := s.specs[j.ModelID]; !ok {
+			return nil, fmt.Errorf("scheduler: unknown model %q", j.ModelID)
+		}
 	}
 	if _, err := job.ParseClass(string(j.Class)); err != nil {
 		return nil, err

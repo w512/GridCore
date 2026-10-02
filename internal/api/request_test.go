@@ -219,3 +219,78 @@ func TestSSETailFindsFinalChunkAcrossReads(t *testing.T) {
 		t.Error("stream without timings should yield zero usage")
 	}
 }
+
+func familyCfg(t *testing.T) *config.Config {
+	t.Helper()
+	cfg, err := config.Parse([]byte(`
+runtimes:
+  sim: {type: fake}
+models:
+  big:   {runtime: sim, capabilities: [chat, vision], fake_vram_mb: 8000}
+  mid:   {runtime: sim, capabilities: [chat], fake_vram_mb: 4000}
+  small: {runtime: sim, capabilities: [chat, vision], fake_vram_mb: 3000}
+families:
+  gemma: {preferred: big, balanced: mid, compact: small, aliases: [default-chat]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+func TestParseFamily(t *testing.T) {
+	cfg := familyCfg(t)
+	image := `"messages":[{"role":"user","content":[{"type":"text","text":"what is it"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AA=="}}]}]`
+	cases := []struct {
+		name string
+		body string
+		hdr  map[string]string
+		want string
+	}{
+		{"alias, any quality", `{"model":"default-chat","messages":[]}`, nil, "big,mid,small"},
+		{"body quality", `{"model":"gemma","gridcore":{"quality":"balanced"}}`, nil, "big,mid"},
+		{"header beats body", `{"model":"gemma","gridcore":{"quality":"balanced"}}`, map[string]string{HeaderQuality: "Preferred"}, "big"},
+		{"suffix class still works", `{"model":"gemma@batch"}`, nil, "big,mid,small"},
+		{"image needs vision", `{"model":"gemma",` + image + `}`, nil, "big,small"},
+		{"image at balanced", `{"model":"gemma","gridcore":{"quality":"balanced"},` + image + `}`, nil, "big"},
+		{"string content is not an image", `{"model":"gemma","messages":[{"role":"user","content":"image_url"}]}`, nil, "big,mid,small"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req, aerr := parse(t, cfg, job.Chat, c.body, c.hdr)
+			if aerr != nil {
+				t.Fatal(aerr.msg)
+			}
+			if req.family != "gemma" || req.modelID != "" || strings.Join(req.variants, ",") != c.want {
+				t.Errorf("family=%q model=%q variants=%v, want %s", req.family, req.modelID, req.variants, c.want)
+			}
+		})
+	}
+
+	req, _ := parse(t, cfg, job.Chat, `{"model":"gemma","messages":[]}`, nil)
+	req.setModel("mid")
+	var out map[string]any
+	_ = json.Unmarshal(req.marshalBody(), &out)
+	if out["model"] != "mid" || req.modelID != "mid" {
+		t.Errorf("setModel: body model = %v", out["model"])
+	}
+
+	for name, c := range map[string]struct {
+		body string
+		hdr  map[string]string
+		code string
+	}{
+		"bad quality":            {`{"model":"gemma","gridcore":{"quality":"best"}}`, nil, "invalid_quality"},
+		"bad quality header":     {`{"model":"gemma"}`, map[string]string{HeaderQuality: "top"}, "invalid_quality"},
+		"embeddings on a family": {`{"model":"gemma","input":"x"}`, nil, "model_capability"},
+	} {
+		kind := job.Chat
+		if strings.Contains(name, "embeddings") {
+			kind = job.Embedding
+		}
+		_, aerr := parse(t, cfg, kind, c.body, c.hdr)
+		if aerr == nil || aerr.code != c.code {
+			t.Errorf("%s: got %+v, want %s", name, aerr, c.code)
+		}
+	}
+}

@@ -124,6 +124,33 @@ models:
   #   parallel: 2
   #   args: ["--cpu-moe", "-ub", "1024", "--reasoning-format", "deepseek", "--reasoning-budget", "0", "--temp", "0.6", "--top-p", "0.95", "--top-k", "20"]
 
+# A family is one name for several variants of the same model (sizes or
+# quants with one prompt format). Requests for it are served by:
+#   interactive          the best variant it can have, evicting cold or idle
+#                        models as for a plain model; a lesser one only when
+#                        the better ones cannot be made resident at all
+#   background, batch    the best variant that runs without evicting
+#                        anything, preferring not to share the model the user
+#                        is chatting with; evicting only when nothing fits
+# "gridcore": {"quality": "balanced"} (or X-GridCore-Quality) excludes the
+# tiers below it; a request with an image only goes to vision variants.
+# The response's X-GridCore-Model names the variant. Embedding models cannot
+# be in a family: vectors from different models are not comparable.
+families:
+  gemma4:
+    preferred: gemma4-12b
+    balanced: gemma4-e4b
+    # compact: gemma4-e2b    # 2.9 GB, ~140 tok/s
+    aliases: [gemma]
+  # qwen38:
+  #   preferred: qwen38-27b         # Q4_K_M, one block on the CPU
+  #   balanced: qwen38-27b-iq4xs    # fully on the GPU
+  # The order is preference, not size: the 35B MoE needs less VRAM than the
+  # dense 9B but processes prompts on the CPU.
+  # ornith:
+  #   preferred: ornith-9b
+  #   balanced: ornith-35b
+
 policy:
   default_class: interactive
   classes:

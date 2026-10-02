@@ -119,8 +119,9 @@ Header wins over body, body over suffix. `X-GridCore-Max-Wait-Ms` (or
 `max_wait_ms`) turns an unbounded wait into a `503 queue_timeout` with
 `Retry-After`.
 
-Responses carry `X-GridCore-Job-Id`, `X-GridCore-Model` (the resolved id)
-and `X-GridCore-Queue-Ms` (how long the request waited for the GPU).
+Responses carry `X-GridCore-Job-Id`, `X-GridCore-Model` (the resolved id),
+`X-GridCore-Queue-Ms` (how long the request waited for the GPU) and, for
+family requests, `X-GridCore-Family`.
 
 | Class | Runs | Evicts |
 |---|---|---|
@@ -130,6 +131,26 @@ and `X-GridCore-Queue-Ms` (how long the request waited for the GPU).
 
 Large `/v1/embeddings` inputs are split into chunks (32 by default) and each
 chunk is a separate scheduling step; the client still gets one response.
+
+### Model families
+
+A family is one name for several variants of the same model, so the
+scheduler can pick the size that fits the moment:
+
+```yaml
+families:
+  gemma4: { preferred: gemma4-12b, balanced: gemma4-e4b, compact: gemma4-e2b }
+```
+
+`"model": "gemma4"` from a chat gets the best variant it can have — the
+12B, evicting cold or idle models just as a request for `gemma4-12b`
+would — and a smaller one only when the 12B cannot be made resident at all.
+From background work it gets the best variant that runs without evicting
+anything and without taking a slot of the model the user is chatting with:
+an ambient task next to a busy 12B lands on the E4B instead of waiting.
+`"gridcore": {"quality": "balanced"}` (or `X-GridCore-Quality`) excludes
+the tiers below; a request with an image only goes to vision variants;
+`X-GridCore-Model` in the response names the variant.
 
 ## Configuration
 

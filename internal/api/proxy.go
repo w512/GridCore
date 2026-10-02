@@ -108,7 +108,12 @@ func (s *Server) inference(kind job.Kind) http.HandlerFunc {
 			return
 		}
 
-		j := job.New(newJobID(), r.Context(), req.class, kind, req.modelID)
+		var j *job.Job
+		if req.family != "" {
+			j = job.NewFamily(newJobID(), r.Context(), req.class, kind, req.family, req.variants)
+		} else {
+			j = job.New(newJobID(), r.Context(), req.class, kind, req.modelID)
+		}
 		j.MaxWait = req.maxWait
 		j.Steps = req.steps
 		h, err := s.sched.Submit(j)
@@ -121,7 +126,11 @@ func (s *Server) inference(kind job.Kind) http.HandlerFunc {
 			return
 		}
 		w.Header().Set(HeaderJobID, j.ID)
-		w.Header().Set(HeaderModel, req.modelID)
+		if req.family != "" {
+			w.Header().Set(HeaderFamily, req.family) // the model follows with the grant
+		} else {
+			w.Header().Set(HeaderModel, req.modelID)
+		}
 
 		if req.steps == 1 {
 			s.single(w, r, req, h)
@@ -140,7 +149,9 @@ func (s *Server) single(w http.ResponseWriter, r *http.Request, req *inferenceRe
 		writeJobError(w, committed, err)
 		return
 	}
+	req.setModel(g.Model)
 	if !committed {
+		w.Header().Set(HeaderModel, g.Model)
 		w.Header().Set(HeaderQueueMS, strconv.FormatInt(g.Queued.Milliseconds(), 10))
 	} else {
 		// Headers are gone (SSE keep-alive started); report the wait as a
@@ -214,6 +225,8 @@ func (s *Server) chunked(w http.ResponseWriter, r *http.Request, req *inferenceR
 			if !gotFirst {
 				gotFirst = true
 				queued = g.Queued
+				req.setModel(g.Model) // before any chunk goroutine reads the body
+				w.Header().Set(HeaderModel, g.Model)
 			}
 			wg.Add(1)
 			go runChunk(g)

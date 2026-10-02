@@ -27,6 +27,7 @@ type Metrics struct {
 	ModelLoadsTotal   *prometheus.CounterVec   // model, outcome
 	ModelEvictions    *prometheus.CounterVec   // model, reason
 	ModelThrash       *prometheus.CounterVec   // model
+	VariantSelected   *prometheus.CounterVec   // family, variant, class
 	ModelsResident    prometheus.Gauge
 	InstanceCrashes   *prometheus.CounterVec // model
 	GPUVRAMUsedBytes  prometheus.Gauge
@@ -58,6 +59,7 @@ func New() *Metrics {
 		ModelLoadsTotal:   f.counterVec("gridcore_model_loads_total", "Model load attempts by outcome (ok|error|timeout).", "model", "outcome"),
 		ModelEvictions:    f.counterVec("gridcore_model_evictions_total", "Models unloaded to make room, by reason.", "model", "reason"),
 		ModelThrash:       f.counterVec("gridcore_model_thrash_total", "Times a model was found reloading too often (the models in use do not fit together).", "model"),
+		VariantSelected:   f.counterVec("gridcore_variant_selected_total", "Family requests by the variant that served them.", "family", "variant", "class"),
 		ModelsResident:    f.gauge("gridcore_models_resident", "Models currently loaded."),
 		InstanceCrashes:   f.counterVec("gridcore_instance_crashes_total", "Runtime processes that exited unexpectedly.", "model"),
 		GPUVRAMUsedBytes:  f.gauge("gridcore_gpu_vram_used_bytes", "VRAM in use on the managed device (all processes)."),

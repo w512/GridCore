@@ -130,11 +130,18 @@ func (s *Server) listModels(w http.ResponseWriter, _ *http.Request) {
 		OwnedBy      string   `json:"owned_by"`
 		Root         string   `json:"root,omitempty"`
 		Capabilities []string `json:"capabilities,omitempty"`
+		Variants     []string `json:"variants,omitempty"` // families: best first
 	}
 	var data []entry
 	for id, m := range s.cfg.Models {
 		data = append(data, entry{ID: id, Object: "model", OwnedBy: "gridcore", Capabilities: m.Capabilities})
 		for _, a := range m.Aliases {
+			data = append(data, entry{ID: a, Object: "model", OwnedBy: "gridcore", Root: id})
+		}
+	}
+	for id, f := range s.cfg.Families {
+		data = append(data, entry{ID: id, Object: "model", OwnedBy: "gridcore", Variants: f.Variants(config.QualityCompact)})
+		for _, a := range f.Aliases {
 			data = append(data, entry{ID: a, Object: "model", OwnedBy: "gridcore", Root: id})
 		}
 	}

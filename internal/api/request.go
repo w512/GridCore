@@ -18,8 +18,10 @@ import (
 const (
 	HeaderClass   = "X-GridCore-Class"
 	HeaderMaxWait = "X-GridCore-Max-Wait-Ms"
+	HeaderQuality = "X-GridCore-Quality"
 	HeaderJobID   = "X-GridCore-Job-Id"
 	HeaderModel   = "X-GridCore-Model"
+	HeaderFamily  = "X-GridCore-Family"
 	HeaderQueueMS = "X-GridCore-Queue-Ms"
 )
 
@@ -42,11 +44,16 @@ type inferenceRequest struct {
 	kind    job.Kind
 	class   job.Class
 	maxWait time.Duration
-	modelID string
+	modelID string // "" for a family request until a variant is granted
 	stream  bool
 
+	// family and variants (best first) are set for family requests.
+	family   string
+	variants []string
+
 	// body is the request with GridCore fields stripped and the model
-	// rewritten to the resolved id. Re-marshalled per step.
+	// rewritten to the resolved id (for a family, at grant time).
+	// Re-marshalled per step.
 	body map[string]json.RawMessage
 	// input holds the embeddings input array when it is an array.
 	input []json.RawMessage
@@ -87,10 +94,11 @@ func parseInferenceRequest(r *http.Request, kind job.Kind, cfg *config.Config, m
 		modelName, suffixClass = name, cls
 	}
 
-	// body "gridcore": {"class": "...", "max_wait_ms": N}
+	// body "gridcore": {"class": "...", "max_wait_ms": N, "quality": "..."}
 	var bodyOpts struct {
 		Class     string `json:"class"`
 		MaxWaitMS *int64 `json:"max_wait_ms"`
+		Quality   string `json:"quality"`
 	}
 	if rawOpts, ok := body["gridcore"]; ok {
 		if err := json.Unmarshal(rawOpts, &bodyOpts); err != nil {
@@ -129,19 +137,44 @@ func parseInferenceRequest(r *http.Request, kind job.Kind, cfg *config.Config, m
 		req.maxWait = time.Duration(*bodyOpts.MaxWaitMS) * time.Millisecond
 	}
 
-	// model resolution and capability
-	id, ok := cfg.ResolveModel(modelName)
-	if !ok {
+	// model or family resolution and capability
+	if id, ok := cfg.ResolveModel(modelName); ok {
+		req.modelID = id
+		m := cfg.Models[id]
+		if !capabilityOK(kind, m) {
+			return nil, badRequest("model_capability",
+				fmt.Sprintf("model %q (capabilities %v) cannot serve %s", id, m.Capabilities, endpointName(kind)))
+		}
+		body["model"], _ = json.Marshal(id)
+	} else if fam, ok := cfg.ResolveFamily(modelName); ok {
+		qualityStr := bodyOpts.Quality
+		if v := r.Header.Get(HeaderQuality); v != "" {
+			qualityStr = v
+		}
+		quality, err := config.ParseQuality(strings.ToLower(strings.TrimSpace(qualityStr)))
+		if err != nil {
+			return nil, badRequest("invalid_quality", err.Error())
+		}
+		vision := kind == job.Chat && hasImage(body)
+		for _, v := range cfg.Families[fam].Variants(quality) {
+			m := cfg.Models[v]
+			if capabilityOK(kind, m) && (!vision || m.HasCapability(config.CapVision)) {
+				req.variants = append(req.variants, v)
+			}
+		}
+		if len(req.variants) == 0 {
+			need := endpointName(kind)
+			if vision {
+				need += " with images"
+			}
+			return nil, badRequest("model_capability",
+				fmt.Sprintf("family %q has no variant at quality %s or better that can serve %s", fam, quality, need))
+		}
+		req.family = fam
+	} else {
 		return nil, &apiError{status: http.StatusNotFound, typ: "invalid_request_error", code: "model_not_found",
 			msg: fmt.Sprintf("model %q is not configured", modelName)}
 	}
-	req.modelID = id
-	m := cfg.Models[id]
-	if !capabilityOK(kind, m) {
-		return nil, badRequest("model_capability",
-			fmt.Sprintf("model %q (capabilities %v) cannot serve %s", id, m.Capabilities, endpointName(kind)))
-	}
-	body["model"], _ = json.Marshal(id)
 
 	if rawStream, ok := body["stream"]; ok {
 		_ = json.Unmarshal(rawStream, &req.stream)
@@ -165,6 +198,41 @@ func parseInferenceRequest(r *http.Request, kind job.Kind, cfg *config.Config, m
 		}
 	}
 	return req, nil
+}
+
+// hasImage reports whether a chat request carries an image part
+// ({"type": "image_url", ...} in some message's content array).
+func hasImage(body map[string]json.RawMessage) bool {
+	var msgs []struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(body["messages"], &msgs) != nil {
+		return false
+	}
+	for _, m := range msgs {
+		var parts []struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(m.Content, &parts) != nil {
+			continue // plain string content
+		}
+		for _, p := range parts {
+			if p.Type == "image_url" || p.Type == "input_image" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// setModel points the forwarded body at the granted model: a family request
+// only learns its variant at grant time.
+func (req *inferenceRequest) setModel(id string) {
+	if req.modelID == id {
+		return
+	}
+	req.modelID = id
+	req.body["model"], _ = json.Marshal(id)
 }
 
 // capabilityOK implements the endpoint -> capability table:

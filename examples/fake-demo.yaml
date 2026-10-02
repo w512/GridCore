@@ -39,6 +39,13 @@ models:
     fake_vram_mb: 6200
     fake_load_time: 4s
 
+  qwen3-4b:
+    runtime: sim
+    capabilities: [chat]
+    parallel: 2
+    fake_vram_mb: 3000
+    fake_load_time: 2s
+
   nomic-embed:
     runtime: sim
     capabilities: [embedding]
@@ -46,6 +53,13 @@ models:
     pinned: true
     fake_vram_mb: 600
     fake_load_time: 1s
+
+# "model": "qwen3" gets the 14B when it can and the 4B when the 14B would
+# have to evict something (background) or cannot fit at all (interactive).
+families:
+  qwen3:
+    preferred: qwen3-14b
+    compact: qwen3-4b
 
 policy:
   default_class: interactive
