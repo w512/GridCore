@@ -168,8 +168,9 @@ type Policy struct {
 	// load one background/batch step may run alongside it, once
 	// background_max_starvation has let it in. After a step of length d the
 	// next one waits d*(1/share - 1), so steps of any length add up to the
-	// share. Unset = 1 (a step may run whenever the previous one is done);
-	// valid range (0, 1].
+	// share. Unset = 0.5: on the 4060 Ti under continuous chat it took
+	// interactive p50 from 4.0 s to 2.7 s and halved background throughput.
+	// 1 = the 0.1 behaviour; valid range (0, 1].
 	BackgroundShare    *float64 `yaml:"background_share"`
 	EmbeddingChunkSize int      `yaml:"embedding_chunk_size"`
 	// Eviction chooses victims among the models the residency rules allow:
@@ -202,7 +203,7 @@ func (p Policy) MaxStarvation() time.Duration {
 // BackgroundShareOrDefault returns the effective background_share.
 func (p Policy) BackgroundShareOrDefault() float64 {
 	if p.BackgroundShare == nil {
-		return 1
+		return 0.5
 	}
 	return *p.BackgroundShare
 }

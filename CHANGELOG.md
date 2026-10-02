@@ -52,7 +52,9 @@
 - `policy.background_share` caps how much of the time under continuous
   interactive load background/batch steps run alongside it: after a step of
   length d the next one waits d·(1/share − 1), so steps of any length add
-  up to the share. The default (1) keeps the 0.1 behaviour.
+  up to the share. The default is 0.5: on the 4060 Ti with six chatting
+  clients it took chat p50 from 4.0 s to 2.7 s (p95 4.8 → 3.5 s) and halved
+  background throughput while the chat lasted; `1` is the 0.1 behaviour.
 - A job waiting for VRAM says which models are kept and why
   (`waiting for VRAM (kept: e4b in use by background)`).
 

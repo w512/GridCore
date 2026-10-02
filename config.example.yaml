@@ -179,8 +179,9 @@ policy:
   # a unit: 3s, 500ms.
   background_max_starvation: 3s
   # How much of the time under continuous interactive load such steps may
-  # run: after a step of length d the next waits d*(1/share - 1). 1 = the
-  # next step may start as soon as the previous one is done. Lower values
-  # make chat faster under load and background slower.
-  # background_share: 1
+  # run: after a step of length d the next waits d*(1/share - 1). On a 4060
+  # Ti with six chatting clients, 0.5 took chat p50 from 4.0 s to 2.7 s and
+  # halved background throughput; 0.25 gave 2.5 s and a quarter. 1 = the
+  # next step may start as soon as the previous one is done (0.1).
+  background_share: 0.5
   embedding_chunk_size: 32

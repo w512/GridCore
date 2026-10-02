@@ -82,8 +82,8 @@ func TestStarvationZeroDisables(t *testing.T) {
 
 func TestBackgroundShare(t *testing.T) {
 	c, _ := Parse(nil)
-	if c.Policy.BackgroundShareOrDefault() != 1 {
-		t.Errorf("default share = %v, want 1 (0.1 behaviour)", c.Policy.BackgroundShareOrDefault())
+	if c.Policy.BackgroundShareOrDefault() != 0.5 {
+		t.Errorf("default share = %v, want 0.5", c.Policy.BackgroundShareOrDefault())
 	}
 	c, err := Parse([]byte("policy:\n  background_share: 0.25\n"))
 	if err != nil || c.Policy.BackgroundShareOrDefault() != 0.25 {
