@@ -27,6 +27,10 @@ var nextPID atomic.Int64
 
 func init() { nextPID.Store(100000) }
 
+// healthClient mirrors the llamacpp adapter: a health probe must not hang on
+// a wedged instance when the caller's ctx has no deadline.
+var healthClient = &http.Client{Timeout: 2 * time.Second}
+
 // Runtime implements runtime.Runtime.
 type Runtime struct {
 	name string
@@ -221,7 +225,7 @@ func (i *Instance) Health(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := healthClient.Do(req)
 	if err != nil {
 		return err
 	}

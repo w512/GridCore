@@ -7,7 +7,7 @@ LDFLAGS  := -s -w -X main.version=$(VERSION)
 HOST     ?= gpu-box
 REMOTE   ?= ~/gridcore
 
-.PHONY: all build tools linux test vet lint run deploy install-service clean
+.PHONY: all build tools linux test vet lint run deploy check-deploy install-service clean
 
 all: vet test build
 
@@ -31,8 +31,12 @@ vet:
 run: build
 	$(BIN) serve --config examples/fake-demo.yaml --state-dir /tmp/gridcore-state
 
-deploy: linux
+deploy: check-deploy linux
 	rsync -az $(BIN)-linux-amd64 $(HOST):.local/bin/gridcore
+
+check-deploy:
+	@command -v rsync >/dev/null || { echo "deploy: rsync not found in PATH" >&2; exit 1; }
+	@[ -n "$(HOST)" ] || { echo "deploy: set HOST, e.g. make deploy HOST=user@gpu-box" >&2; exit 1; }
 
 # Install and (re)start the user service on the GPU box.
 install-service: deploy

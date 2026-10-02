@@ -2,6 +2,8 @@ module github.com/w512/gridcore
 
 go 1.25.0
 
+toolchain go1.26.3
+
 require (
 	github.com/prometheus/client_golang v1.24.1
 	gopkg.in/yaml.v3 v3.0.1
