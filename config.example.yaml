@@ -55,7 +55,8 @@ models:
     runtime: llamacpp
     path: ~/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf
     mmproj: ~/models/mmproj-gemma-4-E4B-F16.gguf
-    capabilities: [chat, vision]
+    # audio: "input_audio" parts (wav/mp3) through the same mmproj.
+    capabilities: [chat, vision, audio]
     ctx: 8192
     parallel: 2
     args: ["--reasoning-budget", "0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "64"]
@@ -133,7 +134,8 @@ models:
 #                        anything, preferring not to share the model the user
 #                        is chatting with; evicting only when nothing fits
 # "gridcore": {"quality": "balanced"} (or X-GridCore-Quality) excludes the
-# tiers below it; a request with an image only goes to vision variants.
+# tiers below it; a request with an image (audio) only goes to variants
+# with the vision (audio) capability.
 # The response's X-GridCore-Model names the variant. Embedding models cannot
 # be in a family: vectors from different models are not comparable.
 families:

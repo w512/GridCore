@@ -33,10 +33,11 @@ const (
 	CapCompletion = "completion"
 	CapEmbedding  = "embedding"
 	CapVision     = "vision"
+	CapAudio      = "audio"
 )
 
 var knownCapabilities = map[string]bool{
-	CapChat: true, CapCompletion: true, CapEmbedding: true, CapVision: true,
+	CapChat: true, CapCompletion: true, CapEmbedding: true, CapVision: true, CapAudio: true,
 }
 
 // Config is the root configuration.

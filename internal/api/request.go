@@ -155,17 +155,30 @@ func parseInferenceRequest(r *http.Request, kind job.Kind, cfg *config.Config, m
 		if err != nil {
 			return nil, badRequest("invalid_quality", err.Error())
 		}
-		vision := kind == job.Chat && hasImage(body)
+		var media []string // capabilities the message content needs
+		if kind == job.Chat {
+			parts := contentParts(body)
+			if parts["image_url"] || parts["input_image"] {
+				media = append(media, config.CapVision)
+			}
+			if parts["input_audio"] {
+				media = append(media, config.CapAudio)
+			}
+		}
 		for _, v := range cfg.Families[fam].Variants(quality) {
 			m := cfg.Models[v]
-			if capabilityOK(kind, m) && (!vision || m.HasCapability(config.CapVision)) {
+			ok := capabilityOK(kind, m)
+			for _, c := range media {
+				ok = ok && m.HasCapability(c)
+			}
+			if ok {
 				req.variants = append(req.variants, v)
 			}
 		}
 		if len(req.variants) == 0 {
 			need := endpointName(kind)
-			if vision {
-				need += " with images"
+			if len(media) > 0 {
+				need += " with " + strings.Join(media, " and ") + " input"
 			}
 			return nil, badRequest("model_capability",
 				fmt.Sprintf("family %q has no variant at quality %s or better that can serve %s", fam, quality, need))
@@ -200,14 +213,15 @@ func parseInferenceRequest(r *http.Request, kind job.Kind, cfg *config.Config, m
 	return req, nil
 }
 
-// hasImage reports whether a chat request carries an image part
-// ({"type": "image_url", ...} in some message's content array).
-func hasImage(body map[string]json.RawMessage) bool {
+// contentParts returns the part types used in a chat request's message
+// content arrays ({"type": "image_url"}, {"type": "input_audio"}, ...).
+func contentParts(body map[string]json.RawMessage) map[string]bool {
+	types := map[string]bool{}
 	var msgs []struct {
 		Content json.RawMessage `json:"content"`
 	}
 	if json.Unmarshal(body["messages"], &msgs) != nil {
-		return false
+		return types
 	}
 	for _, m := range msgs {
 		var parts []struct {
@@ -217,12 +231,10 @@ func hasImage(body map[string]json.RawMessage) bool {
 			continue // plain string content
 		}
 		for _, p := range parts {
-			if p.Type == "image_url" || p.Type == "input_image" {
-				return true
-			}
+			types[p.Type] = true
 		}
 	}
-	return false
+	return types
 }
 
 // setModel points the forwarded body at the granted model: a family request

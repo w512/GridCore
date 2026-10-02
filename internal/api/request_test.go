@@ -227,7 +227,7 @@ runtimes:
   sim: {type: fake}
 models:
   big:   {runtime: sim, capabilities: [chat, vision], fake_vram_mb: 8000}
-  mid:   {runtime: sim, capabilities: [chat], fake_vram_mb: 4000}
+  mid:   {runtime: sim, capabilities: [chat, audio], fake_vram_mb: 4000}
   small: {runtime: sim, capabilities: [chat, vision], fake_vram_mb: 3000}
 families:
   gemma: {preferred: big, balanced: mid, compact: small, aliases: [default-chat]}
@@ -253,6 +253,7 @@ func TestParseFamily(t *testing.T) {
 		{"suffix class still works", `{"model":"gemma@batch"}`, nil, "big,mid,small"},
 		{"image needs vision", `{"model":"gemma",` + image + `}`, nil, "big,small"},
 		{"image at balanced", `{"model":"gemma","gridcore":{"quality":"balanced"},` + image + `}`, nil, "big"},
+		{"audio needs audio", `{"model":"gemma","messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"AA==","format":"wav"}}]}]}`, nil, "mid"},
 		{"string content is not an image", `{"model":"gemma","messages":[{"role":"user","content":"image_url"}]}`, nil, "big,mid,small"},
 	}
 	for _, c := range cases {
@@ -282,6 +283,7 @@ func TestParseFamily(t *testing.T) {
 	}{
 		"bad quality":            {`{"model":"gemma","gridcore":{"quality":"best"}}`, nil, "invalid_quality"},
 		"bad quality header":     {`{"model":"gemma"}`, map[string]string{HeaderQuality: "top"}, "invalid_quality"},
+		"image and audio":        {`{"model":"gemma","messages":[{"role":"user","content":[{"type":"input_audio"},{"type":"image_url"}]}]}`, nil, "model_capability"},
 		"embeddings on a family": {`{"model":"gemma","input":"x"}`, nil, "model_capability"},
 	} {
 		kind := job.Chat

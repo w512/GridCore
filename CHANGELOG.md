@@ -45,7 +45,8 @@
   variant background and batch work can run without evicting anything or
   sharing the model the user is chatting with. `"gridcore": {"quality":
   ...}` / `X-GridCore-Quality` excludes lower tiers, requests with images
-  only go to vision variants, and the response names the variant
+  (audio) only go to variants with the `vision` (`audio`) capability, and
+  the response names the variant
   (`X-GridCore-Model`, `X-GridCore-Family`). `variant` events and
   `gridcore_variant_selected_total{family,variant,class}` show the choices;
   `/v1/models` lists families with their variants.
