@@ -366,6 +366,8 @@ func TestLooksLikeOurs(t *testing.T) {
 
 func TestParseVersion(t *testing.T) {
 	cases := []struct{ out, want string }{
+		// Verbatim from the prebuilt CUDA release b11060 on the 4060 Ti box.
+		{"0.00.000.204 I srv  llama_server: initializing ...\nversion: 0.4.1-dev (build 11060, commit 426090367)\nbuilt with GNU 13.3.0 for Linux x86_64\n", "b11060-426090367"},
 		{"version: 11060 (a1b2c3d)\nbuilt with cc 13.3.0 for x86_64-linux-gnu\n", "b11060-a1b2c3d"},
 		{"load_backend: loaded CUDA backend from /opt/llama.cpp/b11060/libggml-cuda.so\n" +
 			"load_backend: loaded CPU backend from /opt/llama.cpp/b11060/libggml-cpu-zen4.so\n" +

@@ -72,23 +72,30 @@ func (r *Runtime) Version() string {
 }
 
 var (
-	versionLine = regexp.MustCompile(`(?m)^version:\s*(\d+)\s*\(([0-9a-f]+)\)`)
+	// "version: 11060 (a1b2c3d)" (older builds) or
+	// "version: 0.4.1-dev (build 11060, commit 426090367)" (b11060).
+	versionLine = regexp.MustCompile(`(?m)^version:\s*(?:(\d+)\s*\(([0-9a-f]+)\)|\S+\s*\(build\s+(\d+),\s*commit\s+([0-9a-f]+)\))`)
 	backendLine = regexp.MustCompile(`(?m)^load_backend: loaded (\S+) backend`)
 )
 
 // parseVersion extracts the build identity from `llama-server --version`:
 //
-//	load_backend: loaded CUDA backend from /opt/llama.cpp/b11060/libggml-cuda.so
-//	version: 11060 (a1b2c3d)
-//	built with cc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0 for x86_64-linux-gnu
+//	0.00.000.204 I srv  llama_server: initializing ...
+//	version: 0.4.1-dev (build 11060, commit 426090367)
+//	built with GNU 13.3.0 for Linux x86_64
 //
-// The CPU backend is always present and left out.
+// Builds with dynamically loaded backends also print "load_backend: loaded
+// CUDA backend from ..."; the CPU backend is always present and left out.
 func parseVersion(out string) string {
 	m := versionLine.FindStringSubmatch(out)
 	if m == nil {
 		return ""
 	}
-	id := "b" + m[1] + "-" + m[2]
+	build, commit := m[1], m[2]
+	if build == "" {
+		build, commit = m[3], m[4]
+	}
+	id := "b" + build + "-" + commit
 	seen := map[string]bool{}
 	var backends []string
 	for _, b := range backendLine.FindAllStringSubmatch(out, -1) {
