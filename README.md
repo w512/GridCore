@@ -78,7 +78,8 @@ closer to an operating-system scheduler: it manages *workload classes*,
 ## Quickstart
 
 Requirements: Linux x86_64, an NVIDIA GPU with a working driver
-(`nvidia-smi` prints your card), and some GGUF models.
+(`nvidia-smi` prints your card), and some GGUF models. On an Apple Silicon
+Mac, see [below](#on-an-apple-silicon-mac).
 
 ```bash
 # 1. GridCore binary
@@ -113,12 +114,56 @@ curl localhost:8080/v1/chat/completions -d '{
 changes. Run `gridcore status --watch` in another terminal to see the
 scheduler work.
 
-### Try it on a Mac, no GPU needed
+### On an Apple Silicon Mac
 
-Real models need Linux and an NVIDIA card for now; Apple Silicon's unified
-memory is on the list, not in v0.2. But the whole scheduler (classes,
-queues, admission, eviction, families) also runs against a simulated 16 GB
-card, and that works on macOS:
+On master, coming in v0.3 (the v0.2 binaries run real models on Linux and
+NVIDIA only): GridCore runs models through llama.cpp's Metal backend. Until
+the release, build it from source:
+
+```bash
+brew install llama.cpp go
+git clone https://github.com/w512/GridCore && cd GridCore
+make build && mkdir -p ~/.local/bin && cp bin/gridcore ~/.local/bin/
+mkdir -p ~/.config/gridcore
+cp examples/apple-24gb.yaml ~/.config/gridcore/config.yaml
+$EDITOR ~/.config/gridcore/config.yaml        # paths under models:
+
+gridcore check                                # Apple M4 Pro, 16384 MB unified memory
+gridcore bench --all
+gridcore serve
+```
+
+[`deploy/gridcore.plist`](deploy/gridcore.plist) runs it as a launchd
+agent. The GPU shares RAM with macOS and your apps, and that changes the
+accounting:
+
+- The budget is Metal's working-set limit (two thirds of RAM by default,
+  16 GB on a 24 GB Mac; `gridcore check` says where the number came from),
+  and a model's size is all the RAM it takes, the parts llama.cpp keeps on
+  the CPU included: a Gemma 4 12B is 9.2 GB here against 8.5 GB on a 16 GB
+  NVIDIA card.
+- llama.cpp runs without mmap, its RAM prompt cache and context
+  checkpoints unless a model's `args` ask for them: each grows a process
+  after it has been measured (the prompt cache alone took a 12B from 8.8
+  to 18.2 GB in a dozen prompts).
+- An overcommitted Metal device does not fail the load: every running model
+  starts failing its requests. So the default headroom is 1 GB, models load
+  one at a time, and an out-of-memory report from a running model unloads
+  the one loaded last.
+- macOS memory pressure is watched as well. At "warn", background and batch
+  work run only on models already loaded; at "critical", cold models are
+  unloaded one at a time. Requests a person is waiting for are never held.
+
+On an M4 Pro 24 GB with a browser and an IDE open, the mixed load test
+below (3 minutes) loaded each model once and failed no request; chat p50
+was 6.6 s, p95 7.9 s. The 12B, the E2B and the embedder stay resident
+together; the E4B does not fit next to them, so background work that needs
+it waits.
+
+### No GPU at all: a simulated card
+
+The whole scheduler (classes, queues, admission, eviction, families) also
+runs against a simulated 16 GB card, on any machine. On a Mac:
 
 ```bash
 # Apple Silicon; on an Intel Mac take gridcore-darwin-amd64
@@ -205,7 +250,7 @@ models are not comparable.
 server: { listen: 127.0.0.1:8080 }
 
 gpu:
-  device: nvidia:0          # or simulation
+  device: nvidia:0          # or apple (Apple Silicon), or simulation
   headroom_mb: 512          # budget = min(total, vram_limit_mb) - headroom
   vram_limit_mb: null       # cap GridCore below the card, e.g. to leave room for other apps
 
@@ -362,7 +407,9 @@ HTTP: `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`,
 `POST /admin/models/{id}/{load,unload,enable}`.
 
 Run it as a service with [`deploy/gridcore.service`](deploy/gridcore.service)
-(`systemctl --user enable --now gridcore`).
+on Linux (`systemctl --user enable --now gridcore`) or
+[`deploy/gridcore.plist`](deploy/gridcore.plist) on macOS (install steps in
+the file).
 
 ## Status and scope
 
@@ -371,9 +418,13 @@ with cost-based eviction, model families, admission as described above.
 Tested on Ubuntu 24.04 with an RTX 4060 Ti 16 GB and llama.cpp b11060.
 See [`CHANGELOG.md`](CHANGELOG.md) for what changed since v0.1.
 
+On master, for v0.3: Apple Silicon (unified memory, llama.cpp with Metal),
+tested on an M4 Pro 24 GB with macOS 15.8 and llama.cpp b11146.
+
 Deliberately not yet: cloud fallback, preempting a chat mid-generation,
-vLLM/MLX runtimes, AMD GPUs, unified-memory machines, multiple GPUs,
-authentication, a web dashboard. The architecture has room for all of them.
+vLLM/MLX runtimes, AMD GPUs (APUs with unified memory included), multiple
+GPUs, authentication, a web dashboard. The architecture has room for all of
+them.
 
 ## Building
 

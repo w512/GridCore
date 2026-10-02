@@ -1,0 +1,92 @@
+# GridCore on an Apple Silicon Mac with 24 GB of unified memory.
+# Copy to ~/.config/gridcore/config.yaml and adjust the model paths.
+#
+# On a Mac the GPU shares RAM with macOS and every app. GridCore's budget is
+# Metal's working-set limit (two thirds of RAM by default: 16384 MB on a
+# 24 GB machine) minus headroom, and a model's size is all the RAM it takes,
+# the parts llama.cpp keeps on the CPU included. Measured on an M4 Pro
+# (llama.cpp 0.5.0 / b11146 from Homebrew, gridcore bench):
+#
+#   model         memory   load   generation
+#   gemma4-12b    9.2 GB   3.7 s  29 tok/s
+#   gemma4-e4b    5.9 GB   2.8 s  62 tok/s
+#   gemma4-e2b    4.8 GB   2.4 s  90 tok/s
+#   nomic-embed   0.4 GB   0.4 s
+#
+# The 12B, the E2B and the embedder stay resident together (14.5 of 15.4
+# GB); the E4B takes turns with the E2B. With a browser and an IDE open,
+# macOS reports memory pressure "warn" as soon as the 12B is loaded; GridCore
+# then lets background work run only on models already resident.
+#
+# Same files as config.example.yaml, from Hugging Face:
+#   google/gemma-4-12B-it-qat-q4_0-gguf   gemma-4-12b-it-qat-q4_0.gguf + mmproj-gemma-4-12b-it-qat-q4_0.gguf
+#   unsloth/gemma-4-E4B-it-qat-GGUF       gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf + mmproj-F16.gguf
+#   google/gemma-4-E2B-it-qat-q4_0-gguf   gemma-4-E2B_q4_0-it.gguf + gemma-4-E2B-it-mmproj.gguf
+#   nomic-ai/nomic-embed-text-v1.5-GGUF   nomic-embed-text-v1.5.f16.gguf
+
+server:
+  listen: 127.0.0.1:8080
+
+gpu:
+  # apple, or auto (which means apple on macOS).
+  device: apple
+  # Cap below the Metal limit to leave more RAM to your apps, e.g. 12000.
+  vram_limit_mb: null
+  # 1024 is the default on Apple Silicon: memory used by other apps' GPU work
+  # swings by a few hundred MB, and an overcommitted Metal device does not
+  # fail the load, it makes every running model fail its requests.
+  headroom_mb: 1024
+  poll_interval: 500ms
+
+runtimes:
+  llamacpp:
+    # brew install llama.cpp
+    binary: /opt/homebrew/bin/llama-server
+    port_range: [41000, 41999]
+    load_timeout: 180s
+    # On unified memory GridCore also adds --load-mode none, --cache-ram 0
+    # and --ctx-checkpoints 0 unless a model's args set them: each keeps a
+    # model at the size it was measured at (the RAM prompt cache alone grew
+    # a 12B from 8.8 to 18.2 GB over a dozen prompts).
+    default_args: ["--flash-attn", "on"]
+
+models:
+  gemma4-12b:
+    runtime: llamacpp
+    path: ~/models/gemma-4-12b-it-qat-q4_0.gguf
+    mmproj: ~/models/mmproj-gemma-4-12b-it-qat-q4_0.gguf
+    capabilities: [chat, vision]
+    ctx: 16384
+    parallel: 2
+    args: ["--reasoning-budget", "0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "64"]
+    aliases: [gpt-4o, default-chat]
+
+  gemma4-e4b:
+    runtime: llamacpp
+    path: ~/models/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf
+    mmproj: ~/models/mmproj-gemma-4-E4B-F16.gguf
+    capabilities: [chat, vision, audio]
+    ctx: 16384
+    parallel: 2
+    args: ["--reasoning-budget", "0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "64"]
+
+  gemma4-e2b:
+    runtime: llamacpp
+    path: ~/models/gemma-4-E2B_q4_0-it.gguf
+    mmproj: ~/models/gemma-4-E2B-it-mmproj.gguf
+    capabilities: [chat, vision, audio]
+    ctx: 16384
+    parallel: 4
+    args: ["--reasoning-budget", "0", "--temp", "1.0", "--top-p", "0.95", "--top-k", "64"]
+    aliases: [ambient]
+
+  nomic-embed:
+    runtime: llamacpp
+    path: ~/models/nomic-embed-text-v1.5.f16.gguf
+    capabilities: [embedding]
+    ctx: 2048
+    parallel: 4
+    pinned: true
+
+families:
+  gemma4: { preferred: gemma4-12b, balanced: gemma4-e4b, compact: gemma4-e2b }

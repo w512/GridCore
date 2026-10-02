@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased
+
+Apple Silicon: GridCore runs real models on a Mac, through llama.cpp's
+Metal backend. Measured on an M4 Pro 24 GB with macOS 15.8 and llama.cpp
+b11146 (Homebrew).
+
+### Added
+- `gpu.device: apple` (and `auto` on macOS): the device total is Metal's
+  working-set limit (`llama-server --list-devices`, else
+  `iogpu.wired_limit_mb`, else two thirds of RAM); memory in use comes
+  from `ioreg`, a model's size from `footprint` (all the RAM its process
+  takes, CPU-side tensors included), memory pressure and swap from
+  `sysctl`. No cgo, no new dependencies. `gridcore check` names the device
+  and where its limit came from.
+- Estimates on unified memory count the host side too (embeddings, a tied
+  model's input copy of `token_embd`, weights left on the CPU) with Metal's
+  overhead instead of CUDA's: -2..+4 % against measured on Gemma 4 12B, E4B
+  and E2B. `models --explain` says that `-ngl` / `--cpu-moe` save no memory
+  there.
+- Memory pressure: at "warn" background and batch work may not load
+  models (family requests take a resident variant), at "critical" cold
+  models are unloaded one every 5 s, ignoring `min_residency`; a minute of
+  no lower-class loads follows each such unload. Interactive work is never
+  held. `gridcore_memory_pressure_level`, pressure and swap in
+  `/admin/state` and `gridcore status`.
+- Device out of memory while serving: llama.cpp on an overcommitted Metal
+  device keeps answering `/health` and fails every request, neighbours
+  included. Running instances' OOM errors are counted
+  (`gridcore_device_oom_total`); the model loaded within the last minute is
+  unloaded with its measurement discarded, and background loads wait 30 s.
+- `examples/apple-24gb.yaml`, `deploy/gridcore.plist` (launchd agent).
+
+### Changed
+- llama.cpp launch defaults on unified memory, each only if the binary
+  knows the flag and the model's `args` do not set it: `--load-mode none`
+  (or `--no-mmap` on older builds), `--cache-ram 0`, `--ctx-checkpoints 0`.
+  Each of them otherwise grows a process after it was measured: the RAM
+  prompt cache alone took a 12B from 8.8 to 18.2 GB in a dozen prompts.
+- Default `headroom_mb` is 1024 on Apple Silicon (512 elsewhere).
+- On unified memory models load one at a time.
+- While an interactive request is freeing memory for its model or waiting
+  for the load slot, background and batch work start no loads (all
+  devices). On a 24 GB Mac a starved background job kept slipping its load
+  in first: 64 loads in 3 minutes and no chat answered.
+
+### Fixed
+- A load whose warmup ran out of memory is a failed (OOM) load even when
+  `/health` already answers.
+- Orphan reaping after a crash checks reused PIDs through `ps` where there
+  is no `/proc` (macOS); before, it could kill an unrelated process.
+- `gridcore bench` measures on monitors that must be told the PID.
+
 ## 0.2.0 — 2026-10-02
 
 Smarter residency on one card: models are evicted by what they would cost

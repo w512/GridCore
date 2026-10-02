@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd user agent for GridCore on macOS (the Linux equivalent is
+  gridcore.service). launchd does not expand ~ or $HOME, so install it with
+  your home directory filled in:
+
+    mkdir -p ~/Library/LaunchAgents ~/.config/gridcore ~/Library/Logs
+    cp examples/apple-24gb.yaml ~/.config/gridcore/config.yaml   # and edit paths
+    sed "s|__HOME__|$HOME|g" deploy/gridcore.plist > ~/Library/LaunchAgents/us.blokhin.gridcore.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/us.blokhin.gridcore.plist
+
+  Stop:    launchctl bootout gui/$(id -u)/us.blokhin.gridcore
+  Restart: launchctl kickstart -k gui/$(id -u)/us.blokhin.gridcore
+  Logs:    ~/Library/Logs/gridcore.log; llama-server logs in ~/.local/state/gridcore/logs/
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>us.blokhin.gridcore</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__HOME__/.local/bin/gridcore</string>
+		<string>serve</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>GRIDCORE_CONFIG</key>
+		<string>__HOME__/.config/gridcore/config.yaml</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- Restart after a crash, not after a clean stop. -->
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<!-- Give in-flight generations time to finish on stop (SIGTERM first). -->
+	<key>ExitTimeOut</key>
+	<integer>40</integer>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/gridcore.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/gridcore.log</string>
+</dict>
+</plist>

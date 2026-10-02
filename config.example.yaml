@@ -13,7 +13,7 @@ server:
   listen: 127.0.0.1:8080
 
 gpu:
-  # auto | nvidia:<index> | simulation
+  # auto | nvidia:<index> | apple | simulation (Apple Silicon: examples/apple-24gb.yaml)
   device: nvidia:0
   # Artificial VRAM cap in MB. Useful to leave room for other apps or to
   # create memory pressure for testing. null = use device total.

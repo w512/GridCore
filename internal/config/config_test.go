@@ -345,6 +345,11 @@ func TestExampleConfigIsValid(t *testing.T) {
 	if len(c.Models) != 3 {
 		t.Errorf("example should define 3 models, got %d", len(c.Models))
 	}
+	for _, name := range []string{"simulation.yaml", "apple-24gb.yaml"} {
+		if _, err := Load(filepath.Join("..", "..", "examples", name)); err != nil {
+			t.Errorf("examples/%s must parse and validate: %v", name, err)
+		}
+	}
 }
 
 const familyModels = `
