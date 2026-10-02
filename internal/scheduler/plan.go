@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/w512/gridcore/internal/config"
+	"github.com/w512/gridcore/internal/gpu"
 	"github.com/w512/gridcore/internal/job"
 	"github.com/w512/gridcore/internal/model"
 	"github.com/w512/gridcore/internal/residency"
@@ -198,6 +199,10 @@ func (s *Scheduler) planJobLimited(js *jobState, now time.Time, maxSteps int) {
 		return
 	}
 
+	if why := s.pressureHold(js.job.Class, now); why != "" {
+		js.reason = why
+		return
+	}
 	status, err := s.ensureLoaded(sp, js.job.Class, s.batchOverdue(js, now), now)
 	if err != nil {
 		s.fail(js, err, "admission")
@@ -485,6 +490,11 @@ func (s *Scheduler) buildState() State {
 		ExternalMB:  s.externalMB,
 		UtilPct:     s.snap.UtilPct,
 		SnapshotAt:  s.snap.At,
+		MemoryKind:  string(s.snap.MemoryKind),
+	}
+	if s.snap.MemoryKind == gpu.Unified {
+		st.GPU.Pressure = s.effectivePressure(now).String()
+		st.GPU.SwapUsedMB = s.snap.SwapUsedMB
 	}
 	for _, e := range s.res.All() {
 		rm := ResidentModel{

@@ -353,6 +353,30 @@ func (s *Set) VictimsFor(needMB int, c job.Class, overdue bool, now time.Time) [
 	return s.lru(cands, needMB, now)
 }
 
+// ColdVictim picks the cold model that is cheapest to lose (the oldest in
+// lru mode), or nil. Unlike VictimsFor it ignores min_residency: that rule
+// keeps classes from taking turns evicting each other's models, while this
+// is for the host running out of memory (unified memory under pressure).
+func (s *Set) ColdVictim(now time.Time) *Entry {
+	var cands []*Entry
+	for _, e := range s.entries {
+		if e.State == Ready && !e.Evicting && s.Tier(e, now) == Cold {
+			cands = append(cands, e)
+		}
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].ID < cands[j].ID })
+	var vs []*Entry
+	if s.opts.Cost && len(cands) <= maxExactCandidates {
+		vs = s.cheapest(cands, 1, now)
+	} else {
+		vs = s.lru(cands, 1, now)
+	}
+	if len(vs) == 0 {
+		return nil
+	}
+	return vs[0]
+}
+
 func (s *Set) lru(cands []*Entry, needMB int, now time.Time) []*Entry {
 	var cold, hot []*Entry
 	for _, e := range cands {

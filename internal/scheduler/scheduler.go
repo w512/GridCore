@@ -91,6 +91,15 @@ type Scheduler struct {
 	externalSettle int
 	gpuName        string
 
+	// Unified memory: the damped host memory pressure, a recent device
+	// out-of-memory report and the OOM counts already seen per instance
+	// (see pressure.go).
+	pressure    gpu.Pressure
+	pressureLow time.Time
+	oomUntil    time.Time
+	lastRelief  time.Time
+	ooms        map[runtime.Instance]int
+
 	runningInteractive int
 	lastInteractiveEnd time.Time
 	mode               string
@@ -152,6 +161,7 @@ func New(cfg *config.Config, runtimes map[string]runtime.Runtime, mon gpu.Monito
 		mode:      "idle",
 		loads:     map[string][]time.Time{},
 		thrashAt:  map[string]time.Time{},
+		ooms:      map[runtime.Instance]int{},
 	}
 	weights := map[job.Class]float64{}
 	for c, p := range cfg.Policy.Classes {

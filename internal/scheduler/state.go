@@ -27,6 +27,12 @@ type GPUState struct {
 	ExternalMB  int       `json:"external_mb"`  // used by processes GridCore does not manage
 	UtilPct     int       `json:"util_pct"`
 	SnapshotAt  time.Time `json:"snapshot_at"`
+	// MemoryKind is dedicated or unified. On unified memory Pressure is the
+	// level the scheduler acts on (normal | warn | critical) and SwapUsedMB
+	// the host's swap in use.
+	MemoryKind string `json:"memory_kind,omitempty"`
+	Pressure   string `json:"pressure,omitempty"`
+	SwapUsedMB int    `json:"swap_used_mb,omitempty"`
 }
 
 // ResidentModel is one loaded (or loading) model.
@@ -91,9 +97,11 @@ const (
 	EvDisabled  = "disabled"
 	EvEnabled   = "enabled"
 	EvMode      = "mode"
-	EvPreempt   = "preempt" // background/batch step deferred because of interactive mode
-	EvThrash    = "thrash"  // a model keeps being reloaded: the working set does not fit
-	EvVariant   = "variant" // a family request was given one of its variants
+	EvPreempt   = "preempt"  // background/batch step deferred because of interactive mode
+	EvThrash    = "thrash"   // a model keeps being reloaded: the working set does not fit
+	EvVariant   = "variant"  // a family request was given one of its variants
+	EvPressure  = "pressure" // host memory pressure changed (unified memory)
+	EvOOM       = "oom"      // running instances reported the device out of memory
 	EvShutdown  = "shutdown"
 	eventBuffer = 100
 )

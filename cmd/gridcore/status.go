@@ -133,6 +133,16 @@ func renderState(st scheduler.State, p palette, maxEvents int) string {
 		if g.ExternalMB > 64 {
 			w("%s%-27s external (not managed) %s GB%s\n", p.dim, "", gb(g.ExternalMB), p.reset)
 		}
+		if g.MemoryKind == "unified" {
+			col := p.dim
+			switch g.Pressure {
+			case "warn":
+				col = p.yellow
+			case "critical":
+				col = p.red
+			}
+			w("%-27s %sunified memory · pressure %s%s%s · swap %s GB%s\n", "", p.dim, col, g.Pressure, p.dim, gb(g.SwapUsedMB), p.reset)
+		}
 	} else {
 		w("%sGPU: no snapshot yet%s\n", p.dim, p.reset)
 	}

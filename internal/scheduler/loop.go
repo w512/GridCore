@@ -451,6 +451,11 @@ func (s *Scheduler) onSnapshot(e evSnapshot) {
 		s.externalMB = ext
 	}
 
+	now := s.now()
+	s.updatePressure(e.snap.Pressure, now)
+	s.checkOOMs(now)
+	s.relievePressure(now)
+
 	mb := func(v int) float64 { return float64(v) * 1024 * 1024 }
 	s.m.GPUVRAMUsedBytes.Set(mb(e.snap.UsedMB))
 	s.m.GPUVRAMTotalBytes.Set(mb(s.budgetMB()))

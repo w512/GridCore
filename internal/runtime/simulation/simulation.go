@@ -195,6 +195,7 @@ type Instance struct {
 	inflight atomic.Int32
 	peak     atomic.Int32
 	requests atomic.Int64
+	ooms     atomic.Int64
 
 	doneOnce sync.Once
 	done     chan struct{}
@@ -292,6 +293,13 @@ func (i *Instance) Kill() {
 	i.setErr(errors.New("simulated instance: killed"))
 	_ = i.srv.Close()
 }
+
+// OOMs implements runtime.OOMReporter.
+func (i *Instance) OOMs() int { return int(i.ooms.Load()) }
+
+// ReportOOM makes the instance report n out-of-memory errors, as llama.cpp
+// on an overcommitted Metal device does while serving.
+func (i *Instance) ReportOOM(n int) { i.ooms.Add(int64(n)) }
 
 // PeakConcurrency reports the maximum number of simultaneous requests seen.
 // Tests use it to assert the scheduler respected `parallel`.

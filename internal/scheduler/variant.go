@@ -42,7 +42,7 @@ func (s *Scheduler) admissionOf(id string, c job.Class, overdue bool, now time.T
 			return admBusy
 		}
 	}
-	if !s.snapOK {
+	if !s.snapOK || s.pressureHold(c, now) != "" {
 		return admNone
 	}
 	sp := s.specs[id]
@@ -117,6 +117,10 @@ func (s *Scheduler) pickVariant(js *jobState, now time.Time) bool {
 		}
 	}
 	if pick == "" {
+		if why := s.pressureHold(c, now); why != "" {
+			js.reason = fmt.Sprintf("%s (%s: no variant resident)", why, js.job.Family)
+			return false
+		}
 		js.reason = fmt.Sprintf("waiting for VRAM (%s: no variant fits)", js.job.Family) + s.heldBy(c, now)
 		return false
 	}

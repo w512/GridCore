@@ -13,7 +13,8 @@ import (
 	"github.com/w512/gridcore/internal/gpu"
 )
 
-// Monitor simulates a single dedicated-memory GPU.
+// Monitor simulates a single GPU: dedicated memory by default, unified
+// after SetUnified.
 type Monitor struct {
 	name    string
 	totalMB int
@@ -23,6 +24,11 @@ type Monitor struct {
 	lingering map[int]int // pid -> MB still counted in memory.used after the process left the list
 	external  int         // MB used by "someone else" (desktop, other apps)
 	util      int
+
+	// Unified memory: the device then reports host memory pressure and swap.
+	unified  bool
+	pressure gpu.Pressure
+	swapMB   int
 }
 
 // New creates a simulated GPU with the given capacity.
@@ -71,6 +77,28 @@ func (m *Monitor) SetExternal(mb int) {
 	m.external = mb
 }
 
+// SetUnified makes the device report unified memory, with host memory
+// pressure (normal unless SetPressure says otherwise) and swap.
+func (m *Monitor) SetUnified(on bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.unified = on
+}
+
+// SetPressure sets the host memory pressure a unified device reports.
+func (m *Monitor) SetPressure(p gpu.Pressure) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pressure = p
+}
+
+// SetSwap sets the host swap in use a unified device reports.
+func (m *Monitor) SetSwap(mb int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.swapMB = mb
+}
+
 // SetUtil sets the reported utilisation percentage.
 func (m *Monitor) SetUtil(pct int) {
 	m.mu.Lock()
@@ -89,6 +117,14 @@ func (m *Monitor) Snapshot(_ context.Context) (gpu.Snapshot, error) {
 		UsedMB:     m.external,
 		UtilPct:    m.util,
 		At:         time.Now(),
+	}
+	if m.unified {
+		s.MemoryKind = gpu.Unified
+		s.Pressure = m.pressure
+		if s.Pressure == gpu.PressureUnknown {
+			s.Pressure = gpu.PressureNormal
+		}
+		s.SwapUsedMB = m.swapMB
 	}
 	for pid, mb := range m.procs {
 		s.UsedMB += mb

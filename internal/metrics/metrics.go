@@ -34,6 +34,8 @@ type Metrics struct {
 	GPUVRAMReserved   prometheus.Gauge
 	GPUVRAMTotalBytes prometheus.Gauge
 	GPUUtilization    prometheus.Gauge
+	MemoryPressure    prometheus.Gauge       // unified memory: 0 unknown, 1 normal, 2 warn, 4 critical
+	DeviceOOMs        *prometheus.CounterVec // model
 	TokensTotal       *prometheus.CounterVec // model, direction (prompt|generated)
 }
 
@@ -66,6 +68,8 @@ func New() *Metrics {
 		GPUVRAMReserved:   f.gauge("gridcore_gpu_vram_reserved_bytes", "VRAM reserved by the scheduler for loads in progress."),
 		GPUVRAMTotalBytes: f.gauge("gridcore_gpu_vram_total_bytes", "VRAM budget (device total or configured limit)."),
 		GPUUtilization:    f.gauge("gridcore_gpu_utilization_percent", "GPU compute utilisation, 0-100."),
+		MemoryPressure:    f.gauge("gridcore_memory_pressure_level", "Host memory pressure acted on, unified memory only: 0 unknown, 1 normal, 2 warn, 4 critical."),
+		DeviceOOMs:        f.counterVec("gridcore_device_oom_total", "Out-of-memory errors reported by running instances (an overcommitted unified-memory device).", "model"),
 		TokensTotal:       f.counterVec("gridcore_tokens_total", "Tokens processed, by model and direction.", "model", "direction"),
 	}
 }
