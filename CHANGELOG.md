@@ -18,8 +18,17 @@
   GPU); `scripts/gpu-watch.sh` lists GPU processes by GridCore model.
 - `config.example.yaml`: Qwen3.8-27B (IQ4_XS on the GPU, Q4_K_M with one
   layer on the CPU) and Ornith-1.5-35B-A3B with experts in RAM.
+- `gridcore profiles` lists stored measurements and says which ones the
+  scheduler would use and why the others no longer apply (other runtime
+  build, other GPU, changed model settings, model gone from the config);
+  `gridcore profiles prune [--dry-run]` removes the stale ones.
 
 ### Fixed
+- `gridcore bench` (or a prune) while the daemon was running lost its
+  results: the daemon rewrote `profiles.json` from memory on its next
+  update. The store now merges changes made by other processes before it
+  writes, and skips writes that change nothing (it used to rewrite the
+  file on every GPU poll).
 - An instance that was exiting between the two `nvidia-smi` queries made
   its memory look like external usage for one poll, and the planner
   evicted a second, healthy model to make room.
@@ -28,6 +37,11 @@
   runtimes and leaked the child.
 
 ### Changed
+- Measured profiles are keyed by the llama.cpp build (`llama-server
+  --version`: build number, commit, GPU backend) instead of the binary's
+  path, mtime and size, so reinstalling or redeploying the same build keeps
+  them. Profiles recorded by 0.1.0 for the binary that is installed now are
+  carried over on start; `gridcore profiles prune` removes the old entries.
 - CI and release builds use the Go toolchain pinned in `go.mod`
   (`toolchain go1.26.3`) instead of Go 1.25.0; the minimum Go for building
   from source is still 1.25. GitHub Actions moved to Node 24 releases.

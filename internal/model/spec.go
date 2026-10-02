@@ -72,11 +72,11 @@ func (s *Spec) HasCapability(cap string) bool {
 	return false
 }
 
-// ProfileKey identifies the (variant, binary, gpu) tuple a Profile belongs
-// to. binaryID should encode path+mtime of the runtime binary so that a
-// rebuilt llama.cpp invalidates old measurements; gpuName is the device
-// name reported by the monitor.
-func (s *Spec) ProfileKey(binaryID, gpuName string) string {
+// ProfileKey identifies the (variant, runtime build, gpu) tuple a Profile
+// belongs to. runtimeID names the runtime build (scheduler.RuntimeID) so
+// that a different llama.cpp starts with fresh measurements; gpuName is the
+// device name reported by the monitor.
+func (s *Spec) ProfileKey(runtimeID, gpuName string) string {
 	args := append([]string(nil), s.Args...)
 	sort.Strings(args)
 	path := s.Path
@@ -87,7 +87,7 @@ func (s *Spec) ProfileKey(binaryID, gpuName string) string {
 		s.RuntimeType, path, s.MMProj,
 		fmt.Sprint(s.Ctx), fmt.Sprint(s.Parallel),
 		strings.Join(args, "\x00"),
-		binaryID, gpuName,
+		runtimeID, gpuName,
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x01")))
 	return hex.EncodeToString(sum[:8])

@@ -17,6 +17,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +46,62 @@ type Runtime struct {
 	Registry *Registry
 	// tailLines is how many log lines are attached to a load error.
 	tailLines int
+
+	versionOnce sync.Once
+	version     string
+}
+
+// versionTimeout bounds `llama-server --version`. A CUDA build initialises
+// the driver to list devices first, which takes a fraction of a second.
+const versionTimeout = 5 * time.Second
+
+// Version implements runtime.Versioned: "b<build>-<commit>", plus the GPU
+// backends the binary loaded ("b11060-a1b2c3d+CUDA"). The binary is asked
+// once; "" if it does not answer in time or prints no version line.
+func (r *Runtime) Version() string {
+	r.versionOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, r.binary, "--version")
+		cmd.Env = append(os.Environ(), r.Env...)
+		cmd.WaitDelay = time.Second
+		out, _ := cmd.CombinedOutput() // the exit status says nothing useful
+		r.version = parseVersion(string(out))
+	})
+	return r.version
+}
+
+var (
+	versionLine = regexp.MustCompile(`(?m)^version:\s*(\d+)\s*\(([0-9a-f]+)\)`)
+	backendLine = regexp.MustCompile(`(?m)^load_backend: loaded (\S+) backend`)
+)
+
+// parseVersion extracts the build identity from `llama-server --version`:
+//
+//	load_backend: loaded CUDA backend from /opt/llama.cpp/b11060/libggml-cuda.so
+//	version: 11060 (a1b2c3d)
+//	built with cc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0 for x86_64-linux-gnu
+//
+// The CPU backend is always present and left out.
+func parseVersion(out string) string {
+	m := versionLine.FindStringSubmatch(out)
+	if m == nil {
+		return ""
+	}
+	id := "b" + m[1] + "-" + m[2]
+	seen := map[string]bool{}
+	var backends []string
+	for _, b := range backendLine.FindAllStringSubmatch(out, -1) {
+		if name := b[1]; name != "CPU" && !seen[name] {
+			seen[name] = true
+			backends = append(backends, name)
+		}
+	}
+	sort.Strings(backends)
+	if len(backends) > 0 {
+		id += "+" + strings.Join(backends, "+")
+	}
+	return id
 }
 
 // New creates a runtime from its config entry. logDir receives one file per

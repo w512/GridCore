@@ -241,6 +241,7 @@ informed the defaults in [`config.example.yaml`](config.example.yaml).
 | `gridcore check` | validate config, model files, GPU access |
 | `gridcore models [--explain]` | list models with VRAM estimates |
 | `gridcore bench [--all] <model>` | load, measure VRAM / load time / tokens/s, store the profile |
+| `gridcore profiles [prune]` | list stored measurements and whether they still apply; remove the stale ones |
 | `gridcore status [--watch]` | live view of GPU, queues, resident models, events |
 | `make tools` | build `bin/gc-chat` (streaming chat) and `bin/gc-indexer` (background load with progress bar) |
 

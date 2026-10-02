@@ -106,8 +106,9 @@ func cmdBench(args []string) error {
 		fmt.Printf("   vram %d MB (estimate was %d)  load %d ms  prompt %.0f tok/s  gen %.1f tok/s\n\n",
 			r.VRAMMB, r.EstMB, r.LoadMS, r.PromptTPS, r.GenTPS)
 		if store != nil {
-			key := sp.ProfileKey(scheduler.BinaryID(cfg.Runtimes[sp.Runtime]), snap.Name)
-			_ = store.Update(key, id, func(p *model.Profile) {
+			rtID := scheduler.RuntimeID(cfg.Runtimes[sp.Runtime], runtimes[sp.Runtime])
+			_ = store.Update(sp.ProfileKey(rtID, snap.Name), id, func(p *model.Profile) {
+				p.Runtime, p.GPU = rtID, snap.Name
 				p.ObserveVRAM(r.VRAMMB)
 				p.ObserveLoad(time.Duration(r.LoadMS) * time.Millisecond)
 				p.ObserveThroughput(r.PromptTPS, r.GenTPS)

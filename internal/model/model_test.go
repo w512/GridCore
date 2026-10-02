@@ -110,6 +110,69 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 }
 
+func TestStoreSkipsUnchangedWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profiles.json")
+	s, _ := OpenStore(path)
+	if err := s.Update("k", "m", func(p *Profile) { p.ObserveVRAM(9000) }); err != nil {
+		t.Fatal(err)
+	}
+	before := statFile(path)
+	time.Sleep(10 * time.Millisecond) // a rewrite would get a new mtime
+	// The scheduler reports every GPU snapshot; most change nothing.
+	if err := s.Update("k", "m", func(p *Profile) { p.ObserveVRAM(8000) }); err != nil {
+		t.Fatal(err)
+	}
+	if after := statFile(path); after != before {
+		t.Error("an update that changes nothing must not rewrite the file")
+	}
+	if err := s.Update("k", "m", func(p *Profile) { p.ObserveVRAM(9500) }); err != nil {
+		t.Fatal(err)
+	}
+	if after := statFile(path); after == before {
+		t.Error("a real change must be written")
+	}
+}
+
+// The daemon keeps its store open for hours while `gridcore bench` and
+// `gridcore profiles prune` change the same file.
+func TestStoreMergesOtherWriters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profiles.json")
+	daemon, _ := OpenStore(path)
+	_ = daemon.Update("chat", "chat", func(p *Profile) { p.ObserveVRAM(8000) })
+	_ = daemon.Update("old", "old", func(p *Profile) { p.ObserveVRAM(100) })
+
+	bench, _ := OpenStore(path)
+	_ = bench.Update("embed", "embed", func(p *Profile) { p.ObserveVRAM(400) })
+	_ = bench.Update("chat", "chat", func(p *Profile) { p.ObserveVRAM(8500) }) // newer measurement
+
+	prune, _ := OpenStore(path)
+	if err := prune.Delete("old"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The daemon's next write must keep bench's entries, take the newer
+	// value for "chat" and not resurrect the pruned entry.
+	_ = daemon.Update("vision", "vision", func(p *Profile) { p.ObserveVRAM(6000) })
+
+	final, _ := OpenStore(path)
+	got := map[string]int{}
+	for _, p := range final.All() {
+		got[p.Key] = p.VRAMMB
+	}
+	want := map[string]int{"chat": 8500, "embed": 400, "vision": 6000}
+	if len(got) != len(want) {
+		t.Fatalf("profiles = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %d, want %d (all: %v)", k, got[k], v, got)
+		}
+	}
+	if p, ok := daemon.Get("chat"); !ok || p.VRAMMB != 8500 {
+		t.Errorf("daemon should have adopted the newer measurement, got %+v", p)
+	}
+}
+
 func TestStoreInMemory(t *testing.T) {
 	s, err := OpenStore("")
 	if err != nil {

@@ -229,8 +229,7 @@ func (s *Scheduler) recordUsage(modelID string, u Usage) {
 	}
 	if u.PromptTPS > 0 || u.GenTPS > 0 {
 		if sp, ok := s.specs[modelID]; ok {
-			key := s.profileKey(sp)
-			_ = s.store.Update(key, modelID, func(p *model.Profile) { p.ObserveThroughput(u.PromptTPS, u.GenTPS) })
+			s.updateProfile(sp, func(p *model.Profile) { p.ObserveThroughput(u.PromptTPS, u.GenTPS) })
 		}
 	}
 }
@@ -268,9 +267,8 @@ func (s *Scheduler) onLoaded(e evLoaded) {
 		var oom runtime.OOMError
 		if errors.As(e.err, &oom) && oom.OOM() {
 			outcome = "oom"
-			key := s.profileKey(ent.Spec)
-			if p, ok := s.store.Get(key); ok && p.VRAMMB > 0 {
-				_ = s.store.Update(key, e.id, func(p *model.Profile) { p.VRAMMB = 0 })
+			if p, ok := s.store.Get(s.profileKey(ent.Spec)); ok && p.VRAMMB > 0 {
+				s.updateProfile(ent.Spec, func(p *model.Profile) { p.VRAMMB = 0 })
 				s.event(EvLoadFail, e.id, fmt.Sprintf("out of memory with reserved %d MB; stored profile (%d MB) discarded", ent.VRAMMB, p.VRAMMB))
 				s.log.Warn("profile discarded after OOM", "model", e.id, "profile_mb", p.VRAMMB, "reserved_mb", ent.VRAMMB)
 			}
@@ -289,9 +287,8 @@ func (s *Scheduler) onLoaded(e evLoaded) {
 	if ent.LastUsed.IsZero() {
 		ent.LastUsed = now // never-used models are LRU-ordered by load time
 	}
-	key := s.profileKey(ent.Spec)
-	_ = s.store.Update(key, e.id, func(p *model.Profile) { p.ObserveLoad(dur) })
-	if p, ok := s.store.Get(key); ok && p.VRAMMB > 0 {
+	s.updateProfile(ent.Spec, func(p *model.Profile) { p.ObserveLoad(dur) })
+	if p, ok := s.store.Get(s.profileKey(ent.Spec)); ok && p.VRAMMB > 0 {
 		ent.VRAMMB = p.VRAMMB
 	}
 	s.m.ModelLoadSeconds.WithLabelValues(e.id).Observe(dur.Seconds())
@@ -397,6 +394,7 @@ func (s *Scheduler) onSnapshot(e evSnapshot) {
 	s.snapOK = true
 	if s.gpuName == "" {
 		s.gpuName = e.snap.Name
+		s.migrateProfiles()
 	}
 
 	ours := 0
@@ -421,8 +419,7 @@ func (s *Scheduler) onSnapshot(e evSnapshot) {
 			ent.VRAMMB = mb
 		}
 		ent.Measured = true
-		key := s.profileKey(ent.Spec)
-		_ = s.store.Update(key, ent.ID, func(p *model.Profile) { p.ObserveVRAM(mb) })
+		s.updateProfile(ent.Spec, func(p *model.Profile) { p.ObserveVRAM(mb) })
 	}
 	// Memory we cannot attribute to our own instances is "external". While
 	// an instance is loading its growing footprint would land there; while
@@ -525,6 +522,48 @@ func (s *Scheduler) event(kind, subject, detail string) {
 
 func (s *Scheduler) profileKey(sp *model.Spec) string {
 	return sp.ProfileKey(s.binaryIDs[sp.Runtime], s.gpuName)
+}
+
+// migrateProfiles carries measurements over from the 0.1 key, which named
+// the runtime by its binary's path, mtime and size. A profile found under
+// that key was recorded with exactly the binary on disk now, so it is as
+// good as one recorded under the build id.
+func (s *Scheduler) migrateProfiles() {
+	for _, id := range sortedSpecIDs(s.specs) {
+		sp := s.specs[id]
+		legacy := binaryID(s.cfg.Runtimes[sp.Runtime])
+		if legacy == s.binaryIDs[sp.Runtime] {
+			continue // the runtime reports no version; keys are unchanged
+		}
+		old, ok := s.store.Get(sp.ProfileKey(legacy, s.gpuName))
+		if !ok {
+			continue
+		}
+		if _, have := s.store.Get(s.profileKey(sp)); have {
+			continue
+		}
+		s.updateProfile(sp, func(p *model.Profile) {
+			p.VRAMMB, p.LoadMS, p.GenTPS, p.PromptTPS = old.VRAMMB, old.LoadMS, old.GenTPS, old.PromptTPS
+			p.Samples, p.UpdatedAt = old.Samples, old.UpdatedAt
+		})
+		s.log.Info("profile carried over to the runtime build key", "model", id, "runtime", s.binaryIDs[sp.Runtime], "vram_mb", old.VRAMMB)
+	}
+}
+
+// updateProfile applies fn to sp's profile, recording which runtime build
+// and GPU it belongs to.
+func (s *Scheduler) updateProfile(sp *model.Spec, fn func(*model.Profile)) {
+	rt, gpuName := s.binaryIDs[sp.Runtime], s.gpuName
+	err := s.store.Update(sp.ProfileKey(rt, gpuName), sp.ID, func(p *model.Profile) {
+		p.Runtime, p.GPU = rt, gpuName
+		fn(p)
+	})
+	// Updates arrive with every GPU snapshot: report a broken file once,
+	// not twice a second.
+	if err != nil && !s.profileErr {
+		s.log.Warn("profile update failed; measurements are kept in memory only", "model", sp.ID, "err", err)
+	}
+	s.profileErr = err != nil
 }
 
 func (s *Scheduler) updateResidentGauge() {

@@ -49,6 +49,14 @@ type Instance interface {
 	Err() error
 }
 
+// Versioned is implemented by runtimes that can name the build they run.
+// Measured profiles are keyed by it: reinstalling or copying the same build
+// keeps them, a different build starts fresh.
+type Versioned interface {
+	// Version identifies the build, or "" when it cannot be determined.
+	Version() string
+}
+
 // StopGrace is how long Stop waits after SIGTERM before SIGKILL.
 const StopGrace = 5 * time.Second
 

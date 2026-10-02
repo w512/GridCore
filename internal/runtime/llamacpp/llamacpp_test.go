@@ -363,3 +363,43 @@ func TestLooksLikeOurs(t *testing.T) {
 		}
 	}
 }
+
+func TestParseVersion(t *testing.T) {
+	cases := []struct{ out, want string }{
+		{"version: 11060 (a1b2c3d)\nbuilt with cc 13.3.0 for x86_64-linux-gnu\n", "b11060-a1b2c3d"},
+		{"load_backend: loaded CUDA backend from /opt/llama.cpp/b11060/libggml-cuda.so\n" +
+			"load_backend: loaded CPU backend from /opt/llama.cpp/b11060/libggml-cpu-zen4.so\n" +
+			"version: 11060 (a1b2c3d)\nbuilt with cc 13.3.0 for x86_64-linux-gnu\n", "b11060-a1b2c3d+CUDA"},
+		{"load_backend: loaded Vulkan backend from x\nload_backend: loaded CUDA backend from y\nversion: 1 (ff)\n", "b1-ff+CUDA+Vulkan"},
+		{"error: unknown argument: --version\n", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := parseVersion(c.out); got != c.want {
+			t.Errorf("parseVersion(%q) = %q, want %q", c.out, got, c.want)
+		}
+	}
+}
+
+func TestVersionAsksTheBinaryOnce(t *testing.T) {
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	bin := filepath.Join(dir, "llama-server")
+	stub := "#!/bin/sh\necho x >> " + calls + "\necho 'version: 11060 (a1b2c3d)' >&2\n"
+	if err := os.WriteFile(bin, []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rt := New("llamacpp", config.Runtime{Type: config.RuntimeLlamaCpp, Binary: bin}, "")
+	if v := rt.Version(); v != "b11060-a1b2c3d" {
+		t.Fatalf("Version() = %q", v)
+	}
+	_ = rt.Version()
+	if raw, _ := os.ReadFile(calls); strings.Count(string(raw), "x") != 1 {
+		t.Errorf("binary asked %d times, want once", strings.Count(string(raw), "x"))
+	}
+
+	missing := New("llamacpp", config.Runtime{Type: config.RuntimeLlamaCpp, Binary: filepath.Join(dir, "nope")}, "")
+	if v := missing.Version(); v != "" {
+		t.Errorf("missing binary: Version() = %q, want empty", v)
+	}
+}

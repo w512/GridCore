@@ -96,7 +96,8 @@ type Scheduler struct {
 	mode               string
 	shuttingDown       bool
 
-	snapFailures int // consecutive gpu snapshot failures, for log rate-limiting
+	snapFailures int  // consecutive gpu snapshot failures, for log rate-limiting
+	profileErr   bool // last profile write failed (logged once)
 }
 
 // New wires a scheduler. runtimes is keyed by config runtime name.
@@ -140,7 +141,8 @@ func New(cfg *config.Config, runtimes map[string]runtime.Runtime, mon gpu.Monito
 			return nil, fmt.Errorf("scheduler: no runtime implementation for %q", name)
 		}
 		s.ports[name] = newPortAllocator(rc.PortRange[0], rc.PortRange[1])
-		s.binaryIDs[name] = BinaryID(rc)
+		s.binaryIDs[name] = RuntimeID(rc, runtimes[name])
+		s.log.Info("runtime", "name", name, "id", s.binaryIDs[name])
 	}
 	return s, nil
 }
@@ -177,10 +179,20 @@ func checkPinnedFit(cfg *config.Config) error {
 	return nil
 }
 
-// BinaryID encodes the runtime binary identity so a rebuilt llama.cpp
-// invalidates stored profiles. `gridcore bench` uses it to write profiles
-// under the same key the scheduler reads.
-func BinaryID(rc config.Runtime) string {
+// RuntimeID identifies the runtime build for profile keys: the version the
+// adapter reports (llama.cpp: build number, commit and GPU backend), or the
+// binary's path, mtime and size when it cannot tell. `gridcore bench` and
+// `gridcore profiles` use it to agree with the scheduler on keys.
+func RuntimeID(rc config.Runtime, rt runtime.Runtime) string {
+	if v, ok := rt.(runtime.Versioned); ok {
+		if id := v.Version(); id != "" {
+			return id
+		}
+	}
+	return binaryID(rc)
+}
+
+func binaryID(rc config.Runtime) string {
 	if rc.Type == config.RuntimeFake {
 		return "fake"
 	}
