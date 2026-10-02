@@ -232,6 +232,46 @@ func TestDeviceOOMUnloadsLatestLoad(t *testing.T) {
 	}
 }
 
+// On unified memory other apps' GPU memory swings by hundreds of MB (a
+// browser, WindowServer). That must not unload anything or reload anything:
+// a model that fits only while the noise is low loads once, and nothing is
+// evicted when the noise comes back.
+func TestNoisyExternalMemoryCausesNoThrash(t *testing.T) {
+	// a and b are pinned so that only the noise could unload them.
+	models := "  a: { runtime: sim, capabilities: [chat], simulated_vram_mb: 6000, simulated_load_time: 5ms, parallel: 2, pinned: true }\n" +
+		"  b: { runtime: sim, capabilities: [chat], simulated_vram_mb: 6000, simulated_load_time: 5ms, parallel: 2, pinned: true }\n" +
+		"  c: { runtime: sim, capabilities: [chat], simulated_vram_mb: 2400, simulated_load_time: 5ms, parallel: 2 }\n"
+	h := unifiedHarness(t, models)
+	h.eventually(func(st State) bool { return isReady("a")(st) && isReady("b")(st) }, "pinned models preloaded (one at a time)")
+
+	h.gpu.SetExternal(3000) // budget 15488: 12000 + 3000 leaves 488; c (2400 + 512 until measured) waits, does not fail
+	time.Sleep(30 * time.Millisecond)
+	bg := h.submit(job.Background, "c", 1)
+	h.noGrant(bg, 50*time.Millisecond)
+	for i := 0; i < 6; i++ { // the browser shrinks and grows again
+		h.gpu.SetExternal([]int{500, 3000}[i%2])
+		time.Sleep(30 * time.Millisecond)
+		h.clock.Advance(time.Second)
+	}
+	if err := h.runToCompletion(bg, wait); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 6; i++ {
+		h.gpu.SetExternal([]int{3000, 500}[i%2])
+		time.Sleep(30 * time.Millisecond)
+		h.clock.Advance(time.Second)
+		h.run(job.Background, "c")
+	}
+	if n := len(h.events(EvEvict)); n != 0 {
+		t.Errorf("noise must not evict anything, got %d evictions:\n%s", n, h.dump())
+	}
+	for id, want := range map[string]int{"a": 1, "b": 1, "c": 1} {
+		if n := h.loadsOf(id); n != want {
+			t.Errorf("%s loaded %d times, want %d", id, n, want)
+		}
+	}
+}
+
 // Pressure means nothing on a dedicated GPU, even if a monitor reported it.
 func TestPressureIgnoredOnDedicatedGPU(t *testing.T) {
 	h := newHarness(t, 16000, pmA+pmB)
