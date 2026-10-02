@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- VRAM estimate honours the llama.cpp offload flags in a model's args
+  (`-ngl` / `--n-gpu-layers`, `--cpu-moe`, `--n-cpu-moe`, `-ot <regex>=CPU`)
+  and skips multi-token-prediction blocks, so models larger than the card
+  (Qwen3.8-27B with `-ngl 64`) and MoE models with experts in host RAM
+  (Ornith-1.5-35B-A3B with `--cpu-moe`) are admitted without a prior
+  `gridcore bench`. `gridcore models --explain` shows the host part.
+- `gridcore status` dashboard: colors, per-model VRAM bars, relative event
+  times, flicker-free `--watch`; honours `--no-color` and `NO_COLOR`.
+- Demo tools: `make tools` builds `bin/gc-chat` (streaming chat with queue
+  time, TTFT and tokens/s) and `bin/gc-indexer` (background embedding or
+  LLM classification load with a progress bar that visibly pauses);
+  `scripts/demo-tmux.sh` opens the demo layout (`--fake` works without a
+  GPU); `scripts/gpu-watch.sh` lists GPU processes by GridCore model.
+- `config.example.yaml`: Qwen3.8-27B (IQ4_XS on the GPU, Q4_K_M with one
+  layer on the CPU) and Ornith-1.5-35B-A3B with experts in RAM.
+
+### Fixed
+- An instance that was exiting between the two `nvidia-smi` queries made
+  its memory look like external usage for one poll, and the planner
+  evicted a second, healthy model to make room.
+- The orphan reaper identifies processes by command line and port instead
+  of `/proc/<pid>/exe`, which pointed at the interpreter for wrapped
+  runtimes and leaked the child.
+
+### Changed
+- CI and release builds use the Go toolchain pinned in `go.mod`
+  (`toolchain go1.26.3`) instead of Go 1.25.0; the minimum Go for building
+  from source is still 1.25. GitHub Actions moved to Node 24 releases.
+- `make deploy` checks for `rsync` and `HOST` before building.
+
 ## 0.1.0 — 2026-09-13
 
 ### Added
