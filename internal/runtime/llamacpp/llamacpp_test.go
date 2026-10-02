@@ -31,7 +31,7 @@ def oom():
     print("0.27.348578 E ggml_metal_synchronize: error: command buffer 0 failed with status 5", flush=True)
     print(OOM, flush=True)
 if "--help" in sys.argv:
-    print(os.environ.get("STUB_HELP", "-lm,   --load-mode MODE   model loading mode (default: auto)"))
+    print(os.environ.get("STUB_HELP", "-lm, --load-mode MODE\n-cram, --cache-ram N\n-ctxcp, --ctx-checkpoints, --swa-checkpoints N"))
     sys.exit(0)
 port = int(sys.argv[sys.argv.index("--port") + 1])
 print("stub llama-server starting on", port, "args:", " ".join(sys.argv[1:]), flush=True)
@@ -132,19 +132,23 @@ func TestArgs(t *testing.T) {
 	}
 }
 
-func TestArgsUnifiedLoadMode(t *testing.T) {
+func TestArgsUnifiedDefaults(t *testing.T) {
 	rt, _ := newRT(t)
 	sp := spec()
 	sp.Unified = true
-	if got := strings.Join(rt.Args(sp, 1), " "); !strings.Contains(got, "--load-mode none") {
-		t.Errorf("unified memory must load without mmap: %s", got)
+	got := strings.Join(rt.Args(sp, 1), " ")
+	for _, want := range []string{"--load-mode none", "--cache-ram 0", "--ctx-checkpoints 0"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("unified memory must get %q: %s", want, got)
+		}
 	}
-	if got := strings.Join(rt.Args(spec(), 1), " "); strings.Contains(got, "--load-mode") {
-		t.Errorf("dedicated GPUs keep the default: %s", got)
+	if got := strings.Join(rt.Args(spec(), 1), " "); strings.Contains(got, "--load-mode") || strings.Contains(got, "--cache-ram") {
+		t.Errorf("dedicated GPUs keep llama.cpp's defaults: %s", got)
 	}
-	sp.Args = []string{"--load-mode", "mmap"}
-	if got := strings.Join(rt.Args(sp, 1), " "); strings.Count(got, "--load-mode") != 1 {
-		t.Errorf("the user's load mode must win: %s", got)
+	sp.Args = []string{"--load-mode", "mmap", "-cram", "2048"}
+	got = strings.Join(rt.Args(sp, 1), " ")
+	if strings.Count(got, "--load-mode") != 1 || strings.Contains(got, "--cache-ram") || !strings.Contains(got, "--ctx-checkpoints 0") {
+		t.Errorf("the user's choices must win, the rest still apply: %s", got)
 	}
 
 	old, _ := newRT(t, "STUB_HELP=--no-mmap   do not memory-map model")

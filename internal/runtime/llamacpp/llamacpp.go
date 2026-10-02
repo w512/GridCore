@@ -49,34 +49,74 @@ type Runtime struct {
 
 	versionOnce sync.Once
 	version     string
-	noMmapOnce  sync.Once
-	noMmap      []string
+	helpOnce    sync.Once
+	help        string
 }
-
-// loadModeFlags are the user's ways to choose how weights are loaded; any of
-// them in a model's args turns off the unified-memory default.
-var loadModeFlags = []string{"--load-mode", "-lm", "--mmap", "--no-mmap", "--mlock"}
 
 var errWarmupOOM = errors.New("device out of memory during warmup")
 
-// noMmapArgs asks the binary once which spelling it understands: builds
-// from b11146 have --load-mode none, older ones --no-mmap.
-func (r *Runtime) noMmapArgs() []string {
-	r.noMmapOnce.Do(func() {
+// unifiedDefault is one launch default for unified memory: the flag pairs
+// to add when the binary knows them (the first spelling it knows wins), and
+// the flags that mean the user already chose.
+type unifiedDefault struct {
+	options [][]string
+	user    []string
+}
+
+// unifiedDefaults keep a model's footprint what it is right after loading,
+// so that admission can rely on it. Measured on an M4 Pro, llama.cpp
+// b11146, gemma4-12b at 16K x 2 slots:
+//
+//   - without mmap the weights are anonymous memory: they show up in the
+//     footprint, leave with the process, and Metal does not wrap the whole
+//     file (host-side tensors included) in one GPU buffer; it loads faster
+//     too (3.65 s against 6.8);
+//   - the RAM prompt cache (--cache-ram, default 8192 MiB) grew the process
+//     from 8.8 to 18.2 GB over 12 distinct prompts;
+//   - context checkpoints (up to 32 per slot) added 1.1 GB more.
+//
+// On a dedicated GPU all of that is host RAM and none of GridCore's
+// business; on unified memory it is the same pool as the model. A user who
+// wants the cache or checkpoints back sets the flag in the model's args,
+// and the measured peak then covers the growth.
+var unifiedDefaults = []unifiedDefault{
+	{options: [][]string{{"--load-mode", "none"}, {"--no-mmap"}}, user: []string{"--load-mode", "-lm", "--mmap", "--no-mmap", "--mlock"}},
+	{options: [][]string{{"--cache-ram", "0"}}, user: []string{"--cache-ram", "-cram"}},
+	{options: [][]string{{"--ctx-checkpoints", "0"}}, user: []string{"--ctx-checkpoints", "-ctxcp", "--swa-checkpoints"}},
+}
+
+// unifiedArgs returns the unified-memory defaults the binary understands and
+// the model's args do not override.
+func (r *Runtime) unifiedArgs(spec *model.Spec) []string {
+	help := r.helpText()
+	var out []string
+	for _, d := range unifiedDefaults {
+		if hasFlag(spec.Args, d.user...) || hasFlag(r.defaultArgs, d.user...) {
+			continue
+		}
+		for _, opt := range d.options {
+			if strings.Contains(help, opt[0]) {
+				out = append(out, opt...)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// helpText is `llama-server --help`, asked once: flags come and go between
+// builds (--no-mmap became --load-mode in b11146).
+func (r *Runtime) helpText() string {
+	r.helpOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, r.binary, "--help")
 		cmd.Env = append(os.Environ(), r.Env...)
 		cmd.WaitDelay = time.Second
 		out, _ := cmd.CombinedOutput()
-		switch help := string(out); {
-		case strings.Contains(help, "--load-mode"):
-			r.noMmap = []string{"--load-mode", "none"}
-		case strings.Contains(help, "--no-mmap"):
-			r.noMmap = []string{"--no-mmap"}
-		}
+		r.help = string(out)
 	})
-	return r.noMmap
+	return r.help
 }
 
 // versionTimeout bounds `llama-server --version`. A CUDA build initialises
@@ -180,12 +220,8 @@ func (r *Runtime) Args(spec *model.Spec, port int) []string {
 	if spec.HasCapability(config.CapEmbedding) && !spec.HasCapability(config.CapChat) && !spec.HasCapability(config.CapCompletion) {
 		args = append(args, "--embedding")
 	}
-	if spec.Unified && !hasFlag(spec.Args, loadModeFlags...) && !hasFlag(r.defaultArgs, loadModeFlags...) {
-		// Without mmap the weights are anonymous memory: they show up in
-		// the process footprint, leave with the process, and Metal does
-		// not wrap the whole file (host-side tensors included) in one
-		// GPU buffer. Measured on an M4 Pro, it also loads faster.
-		args = append(args, r.noMmapArgs()...)
+	if spec.Unified {
+		args = append(args, r.unifiedArgs(spec)...)
 	}
 	args = append(args, r.defaultArgs...)
 	args = append(args, spec.Args...)
