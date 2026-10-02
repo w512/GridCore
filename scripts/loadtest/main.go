@@ -106,6 +106,10 @@ func main() {
 					s = chatReq(ctx, client, *addr, model, role, *maxTokens, rng.Intn(2) == 0)
 				}
 				if ctx.Err() != nil {
+					if s.status == 0 { // cut off by the end of the run: still waiting
+						s.status = statusUnfinished
+						record(s)
+					}
 					break
 				}
 				record(s)

@@ -77,6 +77,10 @@ func cmdProfiles(args []string) error {
 			return profileStatus{reason: "runtime build " + p.Runtime}
 		case p.GPU != "" && p.GPU != gpuName:
 			return profileStatus{reason: "other GPU " + p.GPU}
+		case p.Runtime == "":
+			// Written by 0.1, keyed by binary path/mtime/size. The daemon
+			// copies a matching one to the build key on start.
+			return profileStatus{reason: "0.1 key (carried over if it matched the installed binary)"}
 		default:
 			return profileStatus{reason: "model settings or runtime changed"}
 		}
