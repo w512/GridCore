@@ -104,8 +104,12 @@ type Scheduler struct {
 
 	runningInteractive int
 	lastInteractiveEnd time.Time
-	mode               string
-	shuttingDown       bool
+	// interactiveLoadPending is set during a planning pass when an
+	// interactive job is freeing memory for its model or waiting for the
+	// load slot; lower classes then start no loads (see loadHold).
+	interactiveLoadPending bool
+	mode                   string
+	shuttingDown           bool
 
 	snapFailures int  // consecutive gpu snapshot failures, for log rate-limiting
 	profileErr   bool // last profile write failed (logged once)

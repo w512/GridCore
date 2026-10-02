@@ -60,6 +60,18 @@ func (s *Scheduler) effectivePressure(now time.Time) gpu.Pressure {
 	return s.pressure
 }
 
+// loadHold says why class c may not start a model load now, or "": while
+// an interactive job is freeing memory for its model or waiting for the
+// load slot, a lower-class load would take that memory or that slot (on a
+// 24 GB Mac this livelocked: 64 loads in 3 minutes and no chat answered),
+// and on unified memory the pressure rules below apply.
+func (s *Scheduler) loadHold(c job.Class, now time.Time) string {
+	if c != job.Interactive && s.interactiveLoadPending {
+		return "an interactive request is waiting for its model to load"
+	}
+	return s.pressureHold(c, now)
+}
+
 // pressureHold says why class c may not load a model now, or "".
 func (s *Scheduler) pressureHold(c job.Class, now time.Time) string {
 	if c == job.Interactive {

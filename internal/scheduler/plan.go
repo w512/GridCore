@@ -24,6 +24,7 @@ func (s *Scheduler) schedule() {
 
 	// Interactive jobs are always considered, each independently: one waiting
 	// for a load must not block another whose model is resident.
+	s.interactiveLoadPending = false
 	for _, js := range snapshotList(s.q.list(job.Interactive)) {
 		s.planJob(js, now)
 	}
@@ -199,11 +200,14 @@ func (s *Scheduler) planJobLimited(js *jobState, now time.Time, maxSteps int) {
 		return
 	}
 
-	if why := s.pressureHold(js.job.Class, now); why != "" {
+	if why := s.loadHold(js.job.Class, now); why != "" {
 		js.reason = why
 		return
 	}
 	status, err := s.ensureLoaded(sp, js.job.Class, s.batchOverdue(js, now), now)
+	if js.job.Class == job.Interactive && (status == "evicting" || status == "load-queued") {
+		s.interactiveLoadPending = true
+	}
 	if err != nil {
 		s.fail(js, err, "admission")
 		return

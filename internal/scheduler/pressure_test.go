@@ -126,6 +126,36 @@ func TestPressureCriticalUnloadsColdModels(t *testing.T) {
 	}
 }
 
+// The load-test livelock on a 24 GB Mac: an interactive request waits for an
+// eviction to finish, a starved background job slips its own load into the
+// one load slot, the interactive request evicts that model the moment it is
+// ready, and around again: 64 loads in 3 minutes, no chat answered. Lower
+// classes must not start loads while interactive work is freeing memory or
+// waiting for the load slot.
+func TestInteractiveLoadNotStarvedByLowerLoads(t *testing.T) {
+	models := "  big: { runtime: sim, capabilities: [chat], simulated_vram_mb: 10000, simulated_load_time: 100ms, parallel: 2 }\n" +
+		"  x: { runtime: sim, capabilities: [chat], simulated_vram_mb: 6000, simulated_load_time: 100ms, parallel: 2 }\n" +
+		"  y: { runtime: sim, capabilities: [chat], simulated_vram_mb: 5000, simulated_load_time: 100ms, parallel: 2 }\n"
+	h := unifiedHarness(t, models)
+	bg := h.submit(job.Background, "x", 1)
+	h.eventually(func(st State) bool { r := h.resident("x"); return r != nil }, "x loading for background")
+	chat := h.submit(job.Interactive, "big", 1)
+	batch := h.submit(job.Batch, "y", 1)
+	h.clock.Advance(5 * time.Second) // background and batch count as starved from now on
+	if err := h.runToCompletion(chat, wait); err != nil {
+		t.Fatalf("interactive request: %v\n%s", err, h.dump())
+	}
+	if n := h.loadsOf("x") + h.loadsOf("y"); n > 2 {
+		t.Errorf("lower classes loaded %d times while interactive waited", n)
+	}
+	h.clock.Advance(time.Second) // big turns cold, interactive mode ends
+	for _, hd := range []*Handle{bg, batch} {
+		if err := h.runToCompletion(hd, wait); err != nil {
+			t.Fatalf("lower classes must still get their turn: %v\n%s", err, h.dump())
+		}
+	}
+}
+
 // On unified memory a second load waits for the first: the pressure one
 // load causes must be visible before the next starts.
 func TestUnifiedLoadsOneAtATime(t *testing.T) {
