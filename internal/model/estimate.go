@@ -44,6 +44,10 @@ const (
 	nUbatch       = 512 // llama-server default; logits buffer is n_ubatch x vocab x f32
 	swaPad        = 512 // llama.cpp pads the SWA cache by about n_ubatch tokens
 	mmprojBufMB   = 256 // vision/audio encoder compute buffers
+	hostComputeMB = 32  // CPU compute buffer, counted on unified memory (24-40 MB measured)
+	// Metal compute buffer (160-170 MB for gemma4 at 16K) plus the
+	// IOAccelerator allocations of a process (~86 MB).
+	metalOverheadMB = 256
 )
 
 func estimateFromGGUF(sp *Spec) (Estimate, error) {
@@ -84,6 +88,7 @@ func estimateFromGGUF(sp *Spec) (Estimate, error) {
 		e.Notes = append(e.Notes, "tied embeddings: token_embd counted in VRAM")
 	}
 	var vocab uint64
+	var tiedMB int // token_embd of a tied model: on the GPU as output, and kept on the host as input too
 	var hostBlocks, hostExpertBlocks int
 	seenHostBlock := map[int]bool{}
 	seenExpertBlock := map[int]bool{}
@@ -91,6 +96,9 @@ func estimateFromGGUF(sp *Spec) (Estimate, error) {
 		b := t.Bytes()
 		if t.Name == "token_embd.weight" && len(t.Dims) == 2 {
 			vocab = t.Dims[1]
+		}
+		if tied && t.Name == "token_embd.weight" {
+			tiedMB = int(b / mb)
 		}
 		if isHostEmbedding(t.Name) && !(tied && t.Name == "token_embd.weight") {
 			e.EmbedMB += int(b / mb)
@@ -160,6 +168,24 @@ func estimateFromGGUF(sp *Spec) (Estimate, error) {
 		e.OverheadMB += int(uint64(nUbatch) * vocab * 4 / mb) // logits
 	}
 	e.TotalMB = e.WeightsMB + e.KVMB + e.MMProjMB + e.OverheadMB
+	if sp.Unified {
+		// One pool of RAM: what stays on the host costs as much as what
+		// goes to the GPU, so the estimate is the process footprint.
+		// Calibrated on an M4 Pro, llama.cpp b11146, --load-mode none
+		// (gemma4 12B / E4B / E2B: -2..+4 %): the host keeps the
+		// embeddings, a tied model's input copy of token_embd and a small
+		// compute buffer; Metal needs no CUDA context and its compute
+		// buffer replaces the logits buffer.
+		if !encoder && outputOnGPU {
+			e.OverheadMB = metalOverheadMB
+		}
+		host := e.EmbedMB + tiedMB + e.HostWeightsMB + hostComputeMB
+		e.TotalMB = e.WeightsMB + e.KVMB + e.MMProjMB + e.OverheadMB + host
+		e.Notes = append(e.Notes, fmt.Sprintf("unified memory: host side %d MB counts", host))
+		if e.HostWeightsMB > 0 {
+			e.Notes = append(e.Notes, "-ngl / --cpu-moe / -ot save no memory on unified memory")
+		}
+	}
 	return e, nil
 }
 

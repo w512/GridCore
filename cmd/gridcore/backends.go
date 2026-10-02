@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/w512/gridcore/internal/config"
 	"github.com/w512/gridcore/internal/gpu"
+	"github.com/w512/gridcore/internal/gpu/apple"
 	"github.com/w512/gridcore/internal/gpu/nvidia"
 	gpusim "github.com/w512/gridcore/internal/gpu/simulation"
 	"github.com/w512/gridcore/internal/runtime"
@@ -26,13 +30,21 @@ func buildBackends(cfg *config.Config, stateDir string) (gpu.Monitor, map[string
 
 	device := cfg.GPU.Device
 	if device == "auto" {
-		if _, err := exec.LookPath("nvidia-smi"); err == nil {
+		if goruntime.GOOS == "darwin" {
+			device = "apple"
+		} else if _, err := exec.LookPath("nvidia-smi"); err == nil {
 			device = "nvidia:0"
 		} else {
 			return nil, nil, fmt.Errorf("gpu.device auto: no supported GPU tooling found (nvidia-smi); set gpu.device explicitly (nvidia:N or simulation)")
 		}
 	}
 	switch {
+	case device == "apple":
+		m, err := apple.New(context.Background(), firstLlamaServer(cfg))
+		if err != nil {
+			return nil, nil, fmt.Errorf("gpu.device apple: %w", err)
+		}
+		mon = m
 	case device == "simulation":
 		simMon = gpusim.New("Simulated GPU", cfg.GPU.SimulatedTotalMB)
 		mon = simMon
@@ -78,4 +90,21 @@ func buildBackends(cfg *config.Config, stateDir string) (gpu.Monitor, map[string
 		}
 	}
 	return mon, runtimes, nil
+}
+
+// firstLlamaServer is the binary that reports the Metal working-set limit
+// (llama-server --list-devices): the first llamacpp runtime by name, or ""
+// when there is none and the limit has to come from sysctl.
+func firstLlamaServer(cfg *config.Config) string {
+	names := make([]string, 0, len(cfg.Runtimes))
+	for name, rc := range cfg.Runtimes {
+		if rc.Type == config.RuntimeLlamaCpp {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	sort.Strings(names)
+	return cfg.Runtimes[names[0]].Binary
 }

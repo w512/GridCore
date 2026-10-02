@@ -1,0 +1,41 @@
++-o AGXAcceleratorG16X  <class AGXAcceleratorG16X, id 0x1000003ac, registered, matched, active, busy 0 (1291 ms), retain 83>
+    {
+      "SchedulerState" = {"Stamps"=(),"BusyWorkQueues"=()}
+      "IOMatchedAtBoot" = Yes
+      "vendor-id" = <6b100000>
+      "GPURawCounterBundleName" = "AGXGPURawCounterBundle"
+      "AGXParameterBufferMaxSizeEverMemless" = 867958784
+      "GPURawCounterPluginClassName" = "AGXGPURawCounterSourceGroup"
+      "MetalPluginClassName" = "AGXG16SDevice"
+      "SCMVersionNumber" = ""
+      "AGCInfo" = {"fLastSubmissionPID"=580,"fSubmissionsSinceLastCheck"=0,"fBusyCount"=0}
+      "CommandSubmissionEnabled" = Yes
+      "IONameMatched" = "gpu,t6040"
+      "MetalPluginName" = "AGXMetalG16X"
+      "PerformanceStatistics" = {"In use system memory (driver)"=0,"Alloc system memory"=11442683904,"Tiler Utilization %"=6,"recoveryCount"=0,"lastRecoveryTime"=0,"Renderer Utilization %"=15,"TiledSceneBytes"=1245184,"Device Utilization %"=15,"SplitSceneCount"=0,"Allocated PB Size"=144441344,"In use system memory"=1341079552}
+      "IOGLBundleName" = "AppleMetalOpenGLRenderer"
+      "AGXParameterBufferMaxSizeNeverMemless" = 433979392
+      "IOGLESBundleName" = "AppleMetalGLRenderer"
+      "IOSourceVersion" = "329.2"
+      "IOPersonalityPublisher" = "com.apple.AGXG16X"
+      "IOPowerManagement" = {"CurrentPowerState"=1,"CapabilityFlags"=2,"MaxPowerState"=1,"DriverPowerState"=1}
+      "model" = "Apple M4 Pro"
+      "AGXTraceCodeVersion" = "3.43.0"
+      "SCMBuildTime" = ""
+      "CFBundleIdentifier" = "com.apple.AGXG16X"
+      "gpu-core-count" = 20
+      "IOProviderClass" = "AppleARMIODevice"
+      "AGXParameterBufferMaxSize" = 1301938176
+      "IONameMatch" = ("gpu,t8015","gpu,t8027","gpu,t8030","gpu,t8103","gpu,t6031","gpu,t6040","gpu,t6041")
+      "IOReportLegendPublic" = Yes
+      "IOClass" = "AGXAcceleratorG16X"
+      "CFBundleIdentifierKernel" = "com.apple.AGXG16X"
+      "GPUConfigurationVariable" = {"num_gps"=8,"kickid_qid_shift"=40,"is_sksm"=1,"usc_gen"=3,"kickid_qid_mask"=127,"num_cores"=20,"num_mgpus"=2,"gpu_gen"=16,"core_mask_list"=(1023,1023),"gpu_var"="S","num_frags"=20}
+      "IOGeneralInterest" = "IOCommand is not serializable"
+      "IOMatchCategory" = "IOAccelerator"
+      "IOProbeScore" = 10000
+      "KDebugVersion" = 4294967296
+      "SurfaceList" = ()
+    }
+    
+

@@ -1,0 +1,4 @@
+0.00.000.063 I srv  llama_server: initializing ...
+Available devices:
+  BLAS: Accelerate (0 MiB, 0 MiB free)
+  MTL0: Apple M4 Pro (16384 MiB, 16383 MiB free)

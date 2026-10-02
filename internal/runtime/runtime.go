@@ -73,3 +73,12 @@ type OOMError interface {
 	error
 	OOM() bool
 }
+
+// OOMReporter is implemented by instances that can tell the device ran out
+// of memory while they were serving. On unified memory (Metal) an
+// overcommitted device does not fail a load: every running instance starts
+// failing its requests, and the scheduler has to hear about it to react.
+type OOMReporter interface {
+	// OOMs counts out-of-memory errors since the instance started.
+	OOMs() int
+}

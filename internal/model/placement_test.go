@@ -99,6 +99,13 @@ func TestEstimateNGLLeavesLowBlocksOnHost(t *testing.T) {
 	if none.WeightsMB != 0 || none.KVMB != 0 || none.OverheadMB != cudaContextMB {
 		t.Errorf("-ngl 0 should leave only the CUDA context: %s", none)
 	}
+
+	// On unified memory the blocks left on the host take the same RAM, so
+	// offloading saves nothing and the estimate says so.
+	uPart := EstimateVRAM(&Spec{RuntimeType: "llamacpp", Path: path, Ctx: 8192, Parallel: 2, Args: []string{"-ngl", "38"}, Unified: true})
+	if uPart.TotalMB < part.TotalMB+part.HostWeightsMB || !hasNote(uPart, "save no memory") {
+		t.Errorf("unified -ngl 38 must count the host weights: %s", uPart)
+	}
 }
 
 // qwen38_27b mirrors the header of Qwen3.8-27B-UD-Q4_K_M: 65 blocks of which

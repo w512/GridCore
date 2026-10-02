@@ -26,6 +26,7 @@ import (
 
 	"github.com/w512/gridcore/internal/api"
 	"github.com/w512/gridcore/internal/config"
+	"github.com/w512/gridcore/internal/gpu/apple"
 	"github.com/w512/gridcore/internal/metrics"
 	"github.com/w512/gridcore/internal/model"
 	"github.com/w512/gridcore/internal/scheduler"
@@ -195,10 +196,20 @@ func cmdCheck(args []string) error {
 		return fmt.Errorf("files:\n%w", err)
 	}
 	fmt.Println("files:  ok")
-	if _, _, err := buildBackends(cfg, ""); err != nil {
+	mon, _, err := buildBackends(cfg, "")
+	if err != nil {
 		return fmt.Errorf("backends: %w", err)
 	}
-	fmt.Println("gpu:    ok")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	snap, err := mon.Snapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("gpu: %w", err)
+	}
+	fmt.Printf("gpu:    ok (%s, %d MB %s memory, %d MB in use)\n", snap.Name, snap.TotalMB, snap.MemoryKind, snap.UsedMB)
+	if m, ok := mon.(*apple.Monitor); ok {
+		fmt.Printf("        Metal working-set limit from %s; memory pressure %s, swap %d MB used\n", m.Source, snap.Pressure, snap.SwapUsedMB)
+	}
 	return nil
 }
 

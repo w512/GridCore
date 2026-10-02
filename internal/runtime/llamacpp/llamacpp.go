@@ -49,6 +49,34 @@ type Runtime struct {
 
 	versionOnce sync.Once
 	version     string
+	noMmapOnce  sync.Once
+	noMmap      []string
+}
+
+// loadModeFlags are the user's ways to choose how weights are loaded; any of
+// them in a model's args turns off the unified-memory default.
+var loadModeFlags = []string{"--load-mode", "-lm", "--mmap", "--no-mmap", "--mlock"}
+
+var errWarmupOOM = errors.New("device out of memory during warmup")
+
+// noMmapArgs asks the binary once which spelling it understands: builds
+// from b11146 have --load-mode none, older ones --no-mmap.
+func (r *Runtime) noMmapArgs() []string {
+	r.noMmapOnce.Do(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, r.binary, "--help")
+		cmd.Env = append(os.Environ(), r.Env...)
+		cmd.WaitDelay = time.Second
+		out, _ := cmd.CombinedOutput()
+		switch help := string(out); {
+		case strings.Contains(help, "--load-mode"):
+			r.noMmap = []string{"--load-mode", "none"}
+		case strings.Contains(help, "--no-mmap"):
+			r.noMmap = []string{"--no-mmap"}
+		}
+	})
+	return r.noMmap
 }
 
 // versionTimeout bounds `llama-server --version`. A CUDA build initialises
@@ -151,6 +179,13 @@ func (r *Runtime) Args(spec *model.Spec, port int) []string {
 	}
 	if spec.HasCapability(config.CapEmbedding) && !spec.HasCapability(config.CapChat) && !spec.HasCapability(config.CapCompletion) {
 		args = append(args, "--embedding")
+	}
+	if spec.Unified && !hasFlag(spec.Args, loadModeFlags...) && !hasFlag(r.defaultArgs, loadModeFlags...) {
+		// Without mmap the weights are anonymous memory: they show up in
+		// the process footprint, leave with the process, and Metal does
+		// not wrap the whole file (host-side tensors included) in one
+		// GPU buffer. Measured on an M4 Pro, it also loads faster.
+		args = append(args, r.noMmapArgs()...)
 	}
 	args = append(args, r.defaultArgs...)
 	args = append(args, spec.Args...)
@@ -263,6 +298,13 @@ func (r *Runtime) Load(ctx context.Context, spec *model.Spec, port int) (runtime
 			return nil, ctx.Err()
 		case <-tick.C:
 			if inst.Health(ctx) == nil {
+				// Metal reports an overcommitted device by failing the
+				// warmup run, yet the server still comes up and answers
+				// /health; every request (and the neighbours') then fails.
+				if tail.OOMs() > 0 {
+					_ = inst.Stop(context.Background())
+					return nil, &LoadError{Model: spec.ID, Cause: errWarmupOOM, tail: tail.String(), Summary: tail.Summary()}
+				}
 				inst.started = time.Now()
 				return inst, nil
 			}
@@ -295,11 +337,15 @@ func (e *LoadError) Tail() string { return e.tail }
 // OOM reports whether the output indicates the device ran out of memory.
 func (e *LoadError) OOM() bool { return looksLikeOOM(e.Summary) || looksLikeOOM(e.tail) }
 
+// looksLikeOOM matches CUDA allocation failures and Metal's
+// "error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)".
 func looksLikeOOM(s string) bool {
 	l := strings.ToLower(s)
 	return strings.Contains(l, "out of memory") ||
 		(strings.Contains(l, "failed to allocate") && (strings.Contains(l, "cuda") || strings.Contains(l, "buffer"))) ||
-		strings.Contains(l, "unable to allocate")
+		strings.Contains(l, "unable to allocate") ||
+		strings.Contains(l, "insufficient memory") ||
+		strings.Contains(l, "erroroutofmemory")
 }
 
 // Instance is one llama-server process.
@@ -328,6 +374,9 @@ func (i *Instance) Done() <-chan struct{} { return i.done }
 
 // LogPath is the file receiving the process output ("" if logging is off).
 func (i *Instance) LogPath() string { return i.logPath }
+
+// OOMs implements runtime.OOMReporter.
+func (i *Instance) OOMs() int { return i.tail.OOMs() }
 
 func (i *Instance) Err() error {
 	i.errMu.Lock()
@@ -409,6 +458,7 @@ type tail struct {
 	n     int
 	lines []string
 	buf   []byte
+	ooms  int // out-of-memory lines seen, over the whole output
 }
 
 func newTail(n int) *tail { return &tail{n: n} }
@@ -429,21 +479,41 @@ func (t *tail) Write(p []byte) (int, error) {
 }
 
 func (t *tail) push(line string) {
+	if looksLikeOOM(line) {
+		t.ooms++
+	}
 	t.lines = append(t.lines, line)
 	if len(t.lines) > t.n {
 		t.lines = t.lines[len(t.lines)-t.n:]
 	}
 }
 
-// Summary picks the most informative line: the first one llama-server
-// logged at error level (the root cause; later ones are consequences),
-// otherwise the last line mentioning an error, otherwise the last line.
+// OOMs counts out-of-memory lines in the output so far.
+func (t *tail) OOMs() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.ooms
+}
+
+// Summary picks the most informative line: the first out-of-memory error
+// (Metal logs "command buffer failed" first and the reason on the next
+// line), else the first line llama-server logged at error level (the root
+// cause; later ones are consequences), otherwise the last line mentioning an
+// error, otherwise the last line.
 func (t *tail) Summary() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	lines := append([]string(nil), t.lines...)
 	if len(t.buf) > 0 {
 		lines = append(lines, string(t.buf))
+	}
+	for _, raw := range lines {
+		if looksLikeOOM(raw) {
+			if f := strings.Fields(strings.TrimSpace(raw)); len(f) > 2 && f[1] == "E" {
+				return strings.Join(f[2:], " ")
+			}
+			return strings.TrimSpace(raw)
+		}
 	}
 	var last, lastErr string
 	for _, raw := range lines {

@@ -141,6 +141,17 @@ func TestEstimateGemma4E2B(t *testing.T) {
 		t.Errorf("gemma has no output.weight; expected tied-embeddings note, got %v", e.Notes)
 	}
 	within(t, "gemma4-e2b", e.TotalMB, 2924, 15)
+
+	// Unified memory: the process footprint measured on an M4 Pro
+	// (llama.cpp b11146, --load-mode none) is the device part plus the
+	// host side: per-layer embeddings and the input copy of token_embd.
+	sp.Unified = true
+	u := EstimateVRAM(sp)
+	t.Log(u)
+	if u.OverheadMB != metalOverheadMB || !hasNote(u, "unified memory") {
+		t.Errorf("unified estimate should use the Metal overhead and say so: %s", u)
+	}
+	within(t, "gemma4-e2b unified", u.TotalMB, 4865, 10)
 }
 
 func hasNote(e Estimate, sub string) bool {
@@ -182,6 +193,12 @@ func TestEstimateEncoderModel(t *testing.T) {
 		t.Errorf("kv = %d, want ~72", e.KVMB)
 	}
 	within(t, "nomic-embed", e.TotalMB, 396, 15)
+
+	u := EstimateVRAM(&Spec{RuntimeType: "llamacpp", Path: path, Ctx: 2048, Parallel: 4, Unified: true})
+	if u.OverheadMB != cudaContextMB {
+		t.Errorf("encoder overhead must not change on unified memory: %d", u.OverheadMB)
+	}
+	within(t, "nomic-embed unified", u.TotalMB, 415, 15)
 }
 
 func TestEstimateHybridQwen35(t *testing.T) {

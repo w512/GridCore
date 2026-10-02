@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -59,7 +60,8 @@ type Server struct {
 }
 
 type GPU struct {
-	// Device selects the monitor: "auto", "nvidia:<idx>" or "simulation".
+	// Device selects the monitor: "auto", "nvidia:<idx>", "apple" (Apple
+	// Silicon unified memory) or "simulation".
 	Device string `yaml:"device"`
 	// VRAMLimitMB caps the budget below the physical total. nil = no cap.
 	VRAMLimitMB *int `yaml:"vram_limit_mb"`
@@ -277,7 +279,7 @@ func (c *Config) applyDefaults() {
 		c.GPU.Device = "auto"
 	}
 	if c.GPU.HeadroomMB == 0 {
-		c.GPU.HeadroomMB = 512
+		c.GPU.HeadroomMB = DefaultHeadroomMB(c.GPU.Device)
 	}
 	if c.GPU.PollInterval == 0 {
 		c.GPU.PollInterval = 500 * time.Millisecond
@@ -371,7 +373,7 @@ func (c *Config) Validate() error {
 		add("gpu.vram_limit_mb must be > 0 when set")
 	}
 	if !validDevice(c.GPU.Device) {
-		add("gpu.device %q: want auto, nvidia:<index> or simulation", c.GPU.Device)
+		add("gpu.device %q: want auto, nvidia:<index>, apple or simulation", c.GPU.Device)
 	}
 
 	for name, rt := range c.Runtimes {
@@ -602,8 +604,27 @@ func DefaultStateDir() string {
 	return filepath.Join(base, "gridcore")
 }
 
+// DefaultHeadroomMB is the headroom for device when the config sets none.
+// Unified memory gets more: its "external" usage (WindowServer, browsers)
+// swings by a few hundred MB, and overcommitting Metal does not fail the
+// load but breaks every running instance. On macOS "auto" means apple.
+func DefaultHeadroomMB(device string) int {
+	if unifiedDevice(device) {
+		return 1024
+	}
+	return 512
+}
+
+// Unified reports whether the device shares RAM with the host, so that a
+// model's CPU-side memory counts against the same budget as its GPU side.
+func (g GPU) Unified() bool { return unifiedDevice(g.Device) }
+
+func unifiedDevice(device string) bool {
+	return device == "apple" || device == "auto" && runtime.GOOS == "darwin"
+}
+
 func validDevice(d string) bool {
-	if d == "auto" || d == "simulation" {
+	if d == "auto" || d == "simulation" || d == "apple" {
 		return true
 	}
 	if idx, ok := strings.CutPrefix(d, "nvidia:"); ok {

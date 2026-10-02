@@ -426,6 +426,15 @@ func (s *Scheduler) pollGPU() {
 		return
 	}
 	s.polling = true
+	if w, ok := s.gpu.(gpu.PIDWatcher); ok {
+		var pids []int
+		for _, e := range s.res.All() {
+			if e.Instance != nil {
+				pids = append(pids, e.Instance.PID())
+			}
+		}
+		w.Watch(pids)
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()

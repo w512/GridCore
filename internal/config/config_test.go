@@ -35,7 +35,7 @@ func TestParseAppliesDefaults(t *testing.T) {
 	if c.Server.Listen != "127.0.0.1:8080" {
 		t.Errorf("listen default = %q", c.Server.Listen)
 	}
-	if c.GPU.Device != "auto" || c.GPU.HeadroomMB != 512 || c.GPU.PollInterval != 500*time.Millisecond {
+	if c.GPU.Device != "auto" || c.GPU.HeadroomMB != DefaultHeadroomMB("auto") || c.GPU.PollInterval != 500*time.Millisecond {
 		t.Errorf("gpu defaults = %+v", c.GPU)
 	}
 	rt := c.Runtimes["llamacpp"]
@@ -138,6 +138,23 @@ func TestParseRejectsUnknownKeys(t *testing.T) {
 	_, err := Parse([]byte("server:\n  listne: 127.0.0.1:1\n"))
 	if err == nil || !strings.Contains(err.Error(), "listne") {
 		t.Fatalf("expected unknown-field error, got %v", err)
+	}
+}
+
+func TestAppleDeviceHeadroom(t *testing.T) {
+	c, err := Parse([]byte(minimal + "gpu:\n  device: apple\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.GPU.HeadroomMB != 1024 {
+		t.Errorf("apple headroom = %d, want 1024", c.GPU.HeadroomMB)
+	}
+	c, err = Parse([]byte(minimal + "gpu:\n  device: apple\n  headroom_mb: 2048\n"))
+	if err != nil || c.GPU.HeadroomMB != 2048 {
+		t.Errorf("explicit headroom must win: %v %v", c.GPU.HeadroomMB, err)
+	}
+	if DefaultHeadroomMB("nvidia:0") != 512 || DefaultHeadroomMB("simulation") != 512 {
+		t.Error("dedicated devices keep 512")
 	}
 }
 

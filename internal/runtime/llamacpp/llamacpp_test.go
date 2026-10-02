@@ -21,9 +21,18 @@ import (
 // stubServer is a tiny Python HTTP server standing in for llama-server. It
 // parses --port, optionally sleeps before becoming healthy (STUB_DELAY), can
 // exit immediately (STUB_CRASH) and ignores SIGTERM (STUB_IGNORE_TERM) so
-// the SIGKILL path is exercised.
+// the SIGKILL path is exercised. --help prints STUB_HELP. Like Metal on an
+// overcommitted Mac it can fail its warmup and still come up
+// (STUB_WARMUP_OOM), or start failing STUB_OOM_AFTER seconds after start.
 const stubServer = `#!/usr/bin/env python3
-import http.server, os, signal, sys, time
+import http.server, os, signal, sys, threading, time
+OOM = "0.27.348586 E error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)"
+def oom():
+    print("0.27.348578 E ggml_metal_synchronize: error: command buffer 0 failed with status 5", flush=True)
+    print(OOM, flush=True)
+if "--help" in sys.argv:
+    print(os.environ.get("STUB_HELP", "-lm,   --load-mode MODE   model loading mode (default: auto)"))
+    sys.exit(0)
 port = int(sys.argv[sys.argv.index("--port") + 1])
 print("stub llama-server starting on", port, "args:", " ".join(sys.argv[1:]), flush=True)
 if os.environ.get("STUB_CRASH"):
@@ -32,6 +41,10 @@ if os.environ.get("STUB_CRASH"):
 if os.environ.get("STUB_IGNORE_TERM"):
     signal.signal(signal.SIGTERM, lambda *a: print("ignoring SIGTERM", flush=True))
 time.sleep(float(os.environ.get("STUB_DELAY", "0")))
+if os.environ.get("STUB_WARMUP_OOM"):
+    oom()
+if os.environ.get("STUB_OOM_AFTER"):
+    threading.Timer(float(os.environ["STUB_OOM_AFTER"]), oom).start()
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
@@ -116,6 +129,66 @@ func TestArgs(t *testing.T) {
 	got = strings.Join(rt.Args(custom, 1), " ")
 	if strings.Contains(got, "--n-gpu-layers 999") || !strings.Contains(got, "-ngl 20") {
 		t.Errorf("user -ngl must win: %s", got)
+	}
+}
+
+func TestArgsUnifiedLoadMode(t *testing.T) {
+	rt, _ := newRT(t)
+	sp := spec()
+	sp.Unified = true
+	if got := strings.Join(rt.Args(sp, 1), " "); !strings.Contains(got, "--load-mode none") {
+		t.Errorf("unified memory must load without mmap: %s", got)
+	}
+	if got := strings.Join(rt.Args(spec(), 1), " "); strings.Contains(got, "--load-mode") {
+		t.Errorf("dedicated GPUs keep the default: %s", got)
+	}
+	sp.Args = []string{"--load-mode", "mmap"}
+	if got := strings.Join(rt.Args(sp, 1), " "); strings.Count(got, "--load-mode") != 1 {
+		t.Errorf("the user's load mode must win: %s", got)
+	}
+
+	old, _ := newRT(t, "STUB_HELP=--no-mmap   do not memory-map model")
+	sp.Args = nil
+	if got := strings.Join(old.Args(sp, 1), " "); !strings.Contains(got, "--no-mmap") || strings.Contains(got, "--load-mode") {
+		t.Errorf("builds before --load-mode get --no-mmap: %s", got)
+	}
+	neither, _ := newRT(t, "STUB_HELP=usage: llama-server [options]")
+	if got := strings.Join(neither.Args(sp, 1), " "); strings.Contains(got, "mmap") || strings.Contains(got, "load-mode") {
+		t.Errorf("a build with neither flag gets none: %s", got)
+	}
+}
+
+// On an overcommitted Mac the warmup fails but the server still answers
+// /health; the load must fail as OOM and leave no process behind.
+func TestLoadWarmupOOM(t *testing.T) {
+	rt, _ := newRT(t, "STUB_WARMUP_OOM=1")
+	_, err := rt.Load(context.Background(), spec(), freePort(t))
+	var le *LoadError
+	if !errors.As(err, &le) || !errors.Is(err, errWarmupOOM) || !le.OOM() {
+		t.Fatalf("want a warmup OOM load error, got %v", err)
+	}
+	if !strings.Contains(le.Summary, "Insufficient Memory") {
+		t.Errorf("summary should name the cause: %q", le.Summary)
+	}
+}
+
+func TestInstanceCountsOOMs(t *testing.T) {
+	rt, _ := newRT(t, "STUB_OOM_AFTER=0.3")
+	inst, err := rt.Load(context.Background(), spec(), freePort(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Stop(context.Background())
+	var rep runtime.OOMReporter = inst.(*Instance)
+	if rep.OOMs() != 0 {
+		t.Fatalf("no OOM yet, got %d", rep.OOMs())
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for rep.OOMs() == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if rep.OOMs() != 1 {
+		t.Errorf("one Metal OOM (two log lines) should count once, got %d", rep.OOMs())
 	}
 }
 

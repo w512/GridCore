@@ -33,6 +33,11 @@ type Spec struct {
 	Pinned  bool
 	Preload bool
 
+	// Unified is set when the device shares RAM with the host (Apple
+	// Silicon): the model's CPU-side memory then counts too, and llama.cpp
+	// loads without mmap.
+	Unified bool
+
 	// Simulation knobs.
 	SimulatedVRAMMB int
 	SimulatedLoad   time.Duration
@@ -55,6 +60,7 @@ func FromConfig(cfg *config.Config) map[string]*Spec {
 			Aliases:         append([]string(nil), m.Aliases...),
 			Pinned:          m.Pinned,
 			Preload:         m.Preload,
+			Unified:         cfg.GPU.Unified(),
 			SimulatedVRAMMB: m.SimulatedVRAMMB,
 			SimulatedLoad:   m.SimulatedLoad,
 		}
