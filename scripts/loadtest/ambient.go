@@ -1,7 +1,6 @@
 package main
 
-// The v0.2 acceptance scenario from docs/idea.md: one GPU, five kinds of
-// work at once.
+// The v0.2 acceptance scenario: one GPU, five kinds of work at once.
 //
 //	chat     a person chatting (interactive, streaming, long pauses)
 //	agent    a coding agent (long prompts, back to back; -agent-class)
