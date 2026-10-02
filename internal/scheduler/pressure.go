@@ -23,6 +23,16 @@ import (
 //	critical the same, and one cold model is unloaded every
 //	         pressureReliefInterval while it lasts
 //
+// After such an unload, background and batch loads stay held for
+// reliefBackoff even if the reading drops to normal at once: freeing the
+// memory is what lowers it, and loading the model straight back raised it
+// again (measured on a 24 GB M4 Pro: a 4.8 GB model loaded three times in a
+// minute next to a 12B one, swap 5.6 -> 10 GB).
+//
+// Loads also go one at a time on unified memory, so that the pressure one
+// load causes is seen before the next starts (two loads at once took 21 s
+// instead of 3 while the system swapped).
+//
 // Interactive work is never held: a person is waiting and the device
 // budget still protects the GPU. The level is raised at once and lowered
 // only after pressureCalm of lower readings, so an app that keeps growing
@@ -36,6 +46,7 @@ import (
 const (
 	pressureCalm           = 10 * time.Second
 	pressureReliefInterval = 5 * time.Second
+	reliefBackoff          = time.Minute
 	oomHold                = 30 * time.Second
 	oomBlameWindow         = time.Minute
 )
@@ -53,6 +64,9 @@ func (s *Scheduler) effectivePressure(now time.Time) gpu.Pressure {
 func (s *Scheduler) pressureHold(c job.Class, now time.Time) string {
 	if c == job.Interactive {
 		return ""
+	}
+	if now.Before(s.reliefUntil) && s.effectivePressure(now) < gpu.PressureWarn {
+		return fmt.Sprintf("memory pressure: no new loads for %s for %s after unloading %s", c, s.reliefUntil.Sub(now).Round(time.Second), s.reliefModel)
 	}
 	if lvl := s.effectivePressure(now); lvl >= gpu.PressureWarn {
 		if now.Before(s.oomUntil) {
@@ -158,4 +172,16 @@ func (s *Scheduler) relievePressure(now time.Time) {
 	}
 	s.evict(victim, reason)
 	s.lastRelief = now
+	s.reliefUntil, s.reliefModel = now.Add(reliefBackoff), victim.ID
+}
+
+// loadInFlight reports whether a model is loading. On unified memory loads
+// go one at a time (see the package comment).
+func (s *Scheduler) loadInFlight() bool {
+	for _, e := range s.res.All() {
+		if e.State == residency.Loading {
+			return true
+		}
+	}
+	return false
 }

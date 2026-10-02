@@ -172,7 +172,11 @@ func benchOne(ctx context.Context, cfg *config.Config, rt runtime.Runtime, mon g
 		res.PromptTPS = tps
 	}
 
-	// Peak over a few snapshots; nvidia-smi lags slightly.
+	// Peak over a few snapshots; nvidia-smi lags slightly. Monitors that
+	// measure only named processes (Apple Silicon) are told which one.
+	if w, ok := mon.(gpu.PIDWatcher); ok {
+		w.Watch([]int{inst.PID()})
+	}
 	for i := 0; i < 4; i++ {
 		snap, err := mon.Snapshot(ctx)
 		if err == nil {

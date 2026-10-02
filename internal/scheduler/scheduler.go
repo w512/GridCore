@@ -98,6 +98,8 @@ type Scheduler struct {
 	pressureLow time.Time
 	oomUntil    time.Time
 	lastRelief  time.Time
+	reliefUntil time.Time
+	reliefModel string
 	ooms        map[runtime.Instance]int
 
 	runningInteractive int

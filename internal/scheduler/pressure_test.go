@@ -110,6 +110,61 @@ func TestPressureCriticalUnloadsColdModels(t *testing.T) {
 			t.Errorf("eviction should name the reason: %q", e.Detail)
 		}
 	}
+
+	// Unloading is what lowers the reading: back at normal, background
+	// still may not load for reliefBackoff, or it would raise it again.
+	h.gpu.SetPressure(gpu.PressureNormal)
+	time.Sleep(50 * time.Millisecond) // polls see the lower reading and start the calm period
+	h.clock.Advance(pressureCalm + time.Second)
+	h.eventually(func(st State) bool { return st.GPU.Pressure == "normal" }, "pressure normal again")
+	bg := h.submit(job.Background, "a", 1)
+	h.noGrant(bg, 50*time.Millisecond)
+	h.eventually(queuedReason("after unloading b"), "background backs off after the relief")
+	h.clock.Advance(reliefBackoff)
+	if err := h.runToCompletion(bg, wait); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// On unified memory a second load waits for the first: the pressure one
+// load causes must be visible before the next starts.
+func TestUnifiedLoadsOneAtATime(t *testing.T) {
+	slow := strings.ReplaceAll(pmA+pmB, "simulated_load_time: 5ms", "simulated_load_time: 300ms")
+	h := unifiedHarness(t, slow)
+	ha := h.submit(job.Interactive, "a", 1)
+	hb := h.submit(job.Interactive, "b", 1)
+	h.eventually(func(st State) bool {
+		loading := 0
+		for _, r := range st.Resident {
+			if r.State == "loading" {
+				loading++
+			}
+		}
+		return loading == 1 && queuedReason("another model to finish loading")(st)
+	}, "one load at a time, the other says why it waits")
+	for _, hd := range []*Handle{ha, hb} {
+		if err := h.runToCompletion(hd, wait); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A dedicated GPU loads both at once.
+	d := newHarness(t, 16000, slow)
+	da, db := d.submit(job.Interactive, "a", 1), d.submit(job.Interactive, "b", 1)
+	d.eventually(func(st State) bool {
+		loading := 0
+		for _, r := range st.Resident {
+			if r.State == "loading" {
+				loading++
+			}
+		}
+		return loading == 2
+	}, "dedicated GPU loads in parallel")
+	for _, hd := range []*Handle{da, db} {
+		if err := d.runToCompletion(hd, wait); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // A running instance reports the device out of memory (Metal overcommitted:

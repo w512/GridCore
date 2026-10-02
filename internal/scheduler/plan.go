@@ -213,6 +213,8 @@ func (s *Scheduler) planJobLimited(js *jobState, now time.Time, maxSteps int) {
 		js.reason = "model loading"
 	case "evicting":
 		js.reason = "evicting to make room"
+	case "load-queued":
+		js.reason = "waiting for another model to finish loading (unified memory loads one at a time)"
 	default:
 		js.reason = "waiting for VRAM" + s.heldBy(js.job.Class, now)
 	}
@@ -242,6 +244,7 @@ func (s *Scheduler) heldBy(c job.Class, now time.Time) string {
 //	"ready"    already resident
 //	"loading"  a load was started (or is in progress)
 //	"evicting" victims were marked; the load starts once they are gone
+//	"load-queued" unified memory: another model is loading; this one is next
 //	"waiting"  nothing can be done right now
 //
 // or an error when the model can never fit. overdue marks a batch job past
@@ -259,6 +262,9 @@ func (s *Scheduler) ensureLoaded(sp *model.Spec, c job.Class, overdue bool, now 
 	need := s.needMB(sp)
 	if need > s.maxLoadableMB(sp) {
 		return "", fmt.Errorf("%w: needs %d MB, at most %d MB can ever be free", ErrModelTooLarge, need, s.maxLoadableMB(sp))
+	}
+	if s.snap.MemoryKind == gpu.Unified && s.loadInFlight() {
+		return "load-queued", nil
 	}
 	avail := s.availableMB()
 	if need <= avail {
