@@ -25,6 +25,15 @@ It is not a model router ("which LLM is smartest for this prompt"). It is
 closer to an operating-system scheduler: it manages *workload classes*,
 *models* and *VRAM* on a machine you own.
 
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=Mu3xzCVoHXc">
+    <img src="docs/gridcore-video.jpg" width="480"
+         alt="Video: I Built a Scheduler So My Local LLMs Can Share One GPU">
+  </a>
+  <br>
+  <sub>▶ <a href="https://www.youtube.com/watch?v=Mu3xzCVoHXc">I Built a Scheduler So My Local LLMs Can Share One GPU</a> on Zero to MVP</sub>
+</p>
+
 ## What it does
 
 - **Three workload classes.** `interactive` always goes first. `background`
