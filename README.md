@@ -113,9 +113,34 @@ curl localhost:8080/v1/chat/completions -d '{
 changes. Run `gridcore status --watch` in another terminal to see the
 scheduler work.
 
-No GPU at hand? `gridcore serve --config examples/simulation.yaml` runs the
-whole scheduler against a simulated 16 GB card, and `scripts/demo-*.sh`
-replay the two scenarios below.
+### Try it on a Mac, no GPU needed
+
+Real models need Linux and an NVIDIA card for now; Apple Silicon's unified
+memory is on the list, not in v0.2. But the whole scheduler (classes,
+queues, admission, eviction, families) also runs against a simulated 16 GB
+card, and that works on macOS:
+
+```bash
+# Apple Silicon; on an Intel Mac take gridcore-darwin-amd64
+curl -fsSL https://github.com/w512/GridCore/releases/latest/download/gridcore-darwin-arm64 \
+  -o gridcore && chmod +x gridcore
+curl -fsSL https://raw.githubusercontent.com/w512/GridCore/master/examples/simulation.yaml \
+  -o simulation.yaml
+
+./gridcore serve --config simulation.yaml
+./gridcore status --watch                     # in a second terminal
+```
+
+The simulated models answer with a canned reply, but load times, VRAM and
+every scheduling decision behave as on a real card: send the `curl` above
+and the first request waits about 6 s while `qwen3-14b` "loads". Download
+with `curl` as shown: macOS quarantines a binary saved from the browser and
+refuses to start it (`xattr -d com.apple.quarantine gridcore` lifts that).
+
+With a clone of the repo, `scripts/demo-*.sh` replay the two scenarios
+below, and `scripts/demo-tmux.sh --simulation` opens the live dashboard
+(needs Go and tmux). On Linux without a GPU the same works with
+`gridcore-linux-amd64`.
 
 ## Telling GridCore what a request is
 
