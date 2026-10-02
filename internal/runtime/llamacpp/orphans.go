@@ -1,10 +1,12 @@
 package llamacpp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -68,11 +70,8 @@ func (r *Registry) ReapOrphans() []RegistryEntry {
 		if !alive(pid) {
 			continue
 		}
-		if cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil && len(cmdline) > 0 {
-			argv := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
-			if !looksLikeOurs(argv, e) {
-				continue // PID was reused by something else
-			}
+		if argv := procArgv(pid); len(argv) > 0 && !looksLikeOurs(argv, e) {
+			continue // PID was reused by something else
 		}
 		_ = syscall.Kill(-pid, syscall.SIGTERM)
 		_ = syscall.Kill(pid, syscall.SIGTERM)
@@ -158,6 +157,24 @@ func looksLikeOurs(argv []string, e RegistryEntry) bool {
 		}
 	}
 	return hasBinary && hasPort
+}
+
+// procArgv returns pid's command line, or nil when the OS does not tell.
+// Linux has /proc/<pid>/cmdline; macOS has no /proc, so it falls back to
+// ps, whose output is argv joined by spaces. Splitting it again is lossy
+// for arguments with spaces, but looksLikeOurs only needs the binary's
+// base name and the port, which survive it.
+func procArgv(pid int) []string {
+	if cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil && len(cmdline) > 0 {
+		return strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ps", "-ww", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(string(out))
 }
 
 func alive(pid int) bool {

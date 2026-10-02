@@ -364,6 +364,30 @@ func TestLooksLikeOurs(t *testing.T) {
 	}
 }
 
+// A recorded PID that now belongs to an unrelated process must survive the
+// reap. macOS has no /proc, so this exercises the ps fallback there.
+func TestReapSkipsReusedPID(t *testing.T) {
+	cmd := exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	if argv := procArgv(cmd.Process.Pid); len(argv) < 2 || filepath.Base(argv[0]) != "sleep" || argv[1] != "30" {
+		t.Fatalf("procArgv = %q, want sleep 30", argv)
+	}
+
+	regPath := filepath.Join(t.TempDir(), "instances.json")
+	reg, _ := OpenRegistry(regPath)
+	reg.Add(RegistryEntry{PID: cmd.Process.Pid, Model: "m", Port: 41003, Binary: "/opt/llama.cpp/current/llama-server"})
+	reg2, _ := OpenRegistry(regPath)
+	if got := reg2.ReapOrphans(); len(got) != 0 {
+		t.Fatalf("reaped an unrelated process: %+v", got)
+	}
+	if !alive(cmd.Process.Pid) {
+		t.Fatal("unrelated process was killed")
+	}
+}
+
 func TestParseVersion(t *testing.T) {
 	cases := []struct{ out, want string }{
 		// Verbatim from the prebuilt CUDA release b11060 on the 4060 Ti box.
