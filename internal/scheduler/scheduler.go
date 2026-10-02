@@ -101,6 +101,19 @@ type Scheduler struct {
 
 	loads    map[string][]time.Time // successful loads per model within thrashWindow
 	thrashAt map[string]time.Time   // last thrash warning per model
+
+	// guard is the background/batch step let in alongside interactive work
+	// by the starvation guard; nextLowerAt is when the next one may start
+	// (policy.background_share).
+	guard       guardStep
+	nextLowerAt time.Time
+}
+
+type guardStep struct {
+	job    string
+	step   int
+	start  time.Time
+	active bool
 }
 
 // New wires a scheduler. runtimes is keyed by config runtime name.

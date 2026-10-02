@@ -111,6 +111,16 @@ func (s *Scheduler) onStepDone(e evStepDone) {
 	delete(js.steps, e.step)
 	js.inflight--
 	js.lastProgress = now
+	if s.guard.active && s.guard.job == e.id && s.guard.step == e.step {
+		// A step of length d at share f is followed by d*(1/f - 1) without
+		// one, so lower-class work takes f of the time whatever its step
+		// length. f = 1 lets the next step in right away.
+		s.guard.active = false
+		if f := s.cfg.Policy.BackgroundShareOrDefault(); f < 1 {
+			d := now.Sub(s.guard.start)
+			s.nextLowerAt = now.Add(time.Duration(float64(d) * (1/f - 1)))
+		}
+	}
 	if ent, ok := s.res.Get(entryID); ok && ent.State != residency.Loading {
 		if ent.Running > 0 {
 			ent.Running--

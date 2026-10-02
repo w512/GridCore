@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -779,6 +780,71 @@ func TestBoundedStarvationUnderContinuousInteractive(t *testing.T) {
 	if err := h.finish(bg, wait); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// background_share 0.25: a 1s step alongside interactive work is followed
+// by 3s without one, so background gets a quarter of the time whatever the
+// length of its steps.
+func TestBackgroundShareSpacesGuardSteps(t *testing.T) {
+	h := newHarnessWith(t, 16000, chat+embed, "  background_max_starvation: 100ms\n  background_share: 0.25\n")
+	cur := h.submit(job.Interactive, "chat", 1)
+	g := h.grant(cur, wait)
+
+	bg := h.submit(job.Background, "embed", 6)
+	h.clock.Advance(150 * time.Millisecond)
+	g0 := h.grant(bg, wait)
+	h.clock.Advance(time.Second) // the step takes 1s
+	bg.StepDone(g0.Step, nil, Usage{})
+	h.completed(bg, 1)
+
+	// Starved again after 100ms, but the share holds it back for 3s.
+	h.clock.Advance(2 * time.Second)
+	h.noGrant(bg, 60*time.Millisecond)
+	h.eventually(func(st State) bool {
+		for _, j := range st.Running {
+			if j.ID == bg.job.ID {
+				return strings.Contains(j.Reason, "background share, next step in 1s")
+			}
+		}
+		return false
+	}, "the waiting job says when its next step may run")
+	h.clock.Advance(1100 * time.Millisecond)
+	g1 := h.grant(bg, wait)
+	if g1.Step != 1 {
+		t.Fatalf("step = %d", g1.Step)
+	}
+
+	// A short step earns a short pause: 200ms -> 600ms.
+	h.clock.Advance(200 * time.Millisecond)
+	bg.StepDone(g1.Step, nil, Usage{})
+	h.completed(bg, 2)
+	h.clock.Advance(400 * time.Millisecond)
+	h.noGrant(bg, 40*time.Millisecond)
+	h.clock.Advance(250 * time.Millisecond)
+	g2 := h.grant(bg, wait)
+	bg.StepDone(g2.Step, nil, Usage{})
+
+	// Interactive goes idle: the share no longer applies.
+	cur.StepDone(g.Step, nil, Usage{})
+	_ = h.finish(cur, wait)
+	h.clock.Advance(100 * time.Millisecond)
+	if err := h.runToCompletion(bg, wait); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// completed waits until the scheduler has processed n finished steps of hd
+// (StepDone is asynchronous; the fake clock must not move before that).
+func (h *harness) completed(hd *Handle, n int) {
+	h.t.Helper()
+	h.eventually(func(st State) bool {
+		for _, j := range st.Running {
+			if j.ID == hd.job.ID {
+				return j.Completed >= n
+			}
+		}
+		return false
+	}, fmt.Sprintf("%s: %d steps completed", hd.job.ID, n))
 }
 
 func TestStarvationGuardDisabled(t *testing.T) {

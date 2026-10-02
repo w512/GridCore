@@ -38,6 +38,10 @@
   30 times in 5 minutes.
 - Thrash detection: a model loaded 6 times within 5 minutes produces a
   `thrash` event, a warning with a hint and `gridcore_model_thrash_total`.
+- `policy.background_share` caps how much of the time under continuous
+  interactive load background/batch steps run alongside it: after a step of
+  length d the next one waits d·(1/share − 1), so steps of any length add
+  up to the share. The default (1) keeps the 0.1 behaviour.
 - A job waiting for VRAM says which models are kept and why
   (`waiting for VRAM (kept: e4b in use by background)`).
 

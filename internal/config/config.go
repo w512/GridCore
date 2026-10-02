@@ -113,7 +113,14 @@ type Policy struct {
 	// run alongside interactive work. Unset = 3s; "0s" disables the
 	// guarantee (strict exclusivity). A pointer so that 0 and unset differ.
 	BackgroundMaxStarvation *time.Duration `yaml:"background_max_starvation"`
-	EmbeddingChunkSize      int            `yaml:"embedding_chunk_size"`
+	// BackgroundShare caps how much of the time under continuous interactive
+	// load one background/batch step may run alongside it, once
+	// background_max_starvation has let it in. After a step of length d the
+	// next one waits d*(1/share - 1), so steps of any length add up to the
+	// share. Unset = 1 (a step may run whenever the previous one is done);
+	// valid range (0, 1].
+	BackgroundShare    *float64 `yaml:"background_share"`
+	EmbeddingChunkSize int      `yaml:"embedding_chunk_size"`
 	// Eviction chooses victims among the models the residency rules allow:
 	// "cost" (default) keeps the models that would be expensive to lose,
 	// weighing reload time by recent demand; "lru" evicts the least recently
@@ -139,6 +146,14 @@ func (p Policy) MaxStarvation() time.Duration {
 		return 3 * time.Second
 	}
 	return *p.BackgroundMaxStarvation
+}
+
+// BackgroundShareOrDefault returns the effective background_share.
+func (p Policy) BackgroundShareOrDefault() float64 {
+	if p.BackgroundShare == nil {
+		return 1
+	}
+	return *p.BackgroundShare
 }
 
 // MinResidencyOrDefault returns the effective min_residency.
@@ -375,6 +390,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Policy.BackgroundMaxStarvation != nil && *c.Policy.BackgroundMaxStarvation < 0 {
 		add("policy.background_max_starvation must be >= 0")
+	}
+	if v := c.Policy.BackgroundShare; v != nil && (*v <= 0 || *v > 1) {
+		add("policy.background_share %v: want a fraction in (0, 1]; background_max_starvation: 0s stops background under interactive load", *v)
 	}
 	if c.Policy.Eviction != EvictionCost && c.Policy.Eviction != EvictionLRU {
 		add("policy.eviction %q: want cost or lru", c.Policy.Eviction)

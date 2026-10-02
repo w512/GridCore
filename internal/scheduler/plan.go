@@ -35,24 +35,30 @@ func (s *Scheduler) schedule() {
 		// impact is one small step's worth of contention. Jobs are tried
 		// oldest-progress first, but one whose model cannot be made resident
 		// (e.g. it would need to evict a hot model) must not block others
-		// whose model is already loaded.
-		if s.runningLowerSteps() == 0 {
+		// whose model is already loaded. background_share spaces these steps
+		// out (see onStepDone).
+		if s.runningLowerSteps() == 0 && !now.Before(s.nextLowerAt) {
 			for _, js := range s.starvedJobs(now) {
 				before := js.dispatched
 				s.planJobLimited(js, now, 1)
 				if js.dispatched > before {
+					s.guard = guardStep{job: js.job.ID, step: before, start: now, active: true}
 					s.event(EvPreempt, js.job.ID, fmt.Sprintf("%s starved %s; running one step alongside interactive", js.job.Class, now.Sub(js.lastProgress).Round(time.Millisecond)))
 					break
 				}
 			}
 		}
+		reason := "interactive mode"
+		if now.Before(s.nextLowerAt) {
+			reason = "interactive mode; background share, next step in " + s.nextLowerAt.Sub(now).Round(100*time.Millisecond).String()
+		}
 		for _, js := range s.q.list(job.Background) {
 			if js.reason == "" || js.remaining() > 0 {
-				js.reason = "interactive mode"
+				js.reason = reason
 			}
 		}
 		for _, js := range s.q.list(job.Batch) {
-			js.reason = "interactive mode"
+			js.reason = reason
 		}
 	} else {
 		for _, js := range snapshotList(s.q.list(job.Background)) {

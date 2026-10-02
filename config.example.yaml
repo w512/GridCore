@@ -151,4 +151,9 @@ policy:
   # long. "0s" = strict exclusivity (background may starve). Durations need
   # a unit: 3s, 500ms.
   background_max_starvation: 3s
+  # How much of the time under continuous interactive load such steps may
+  # run: after a step of length d the next waits d*(1/share - 1). 1 = the
+  # next step may start as soon as the previous one is done. Lower values
+  # make chat faster under load and background slower.
+  # background_share: 1
   embedding_chunk_size: 32

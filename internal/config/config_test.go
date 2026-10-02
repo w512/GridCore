@@ -80,6 +80,22 @@ func TestStarvationZeroDisables(t *testing.T) {
 	}
 }
 
+func TestBackgroundShare(t *testing.T) {
+	c, _ := Parse(nil)
+	if c.Policy.BackgroundShareOrDefault() != 1 {
+		t.Errorf("default share = %v, want 1 (0.1 behaviour)", c.Policy.BackgroundShareOrDefault())
+	}
+	c, err := Parse([]byte("policy:\n  background_share: 0.25\n"))
+	if err != nil || c.Policy.BackgroundShareOrDefault() != 0.25 {
+		t.Errorf("share 0.25: %v %v", c, err)
+	}
+	for _, bad := range []string{"0", "-0.1", "1.5"} {
+		if _, err := Parse([]byte("policy:\n  background_share: " + bad + "\n")); err == nil {
+			t.Errorf("background_share %s should be rejected", bad)
+		}
+	}
+}
+
 func TestEvictionPolicy(t *testing.T) {
 	c, err := Parse(nil)
 	if err != nil {
