@@ -118,18 +118,25 @@ work.
 
 ### On an Apple Silicon Mac
 
-On master, coming in v0.3 (the v0.2 binaries run real models on Linux and
-NVIDIA only): GridCore runs models through llama.cpp's Metal backend. Until
-the release, build it from source:
+Since v0.3 GridCore runs models on a Mac too, through llama.cpp's Metal
+backend:
 
 ```bash
-brew install llama.cpp go
-git clone https://github.com/w512/GridCore && cd GridCore
-make build && mkdir -p ~/.local/bin && cp bin/gridcore ~/.local/bin/
+# 1. llama.cpp with Metal
+brew install llama.cpp
+
+# 2. GridCore binary (on an Intel Mac: simulation only, see below)
+mkdir -p ~/.local/bin
+curl -fsSL https://github.com/w512/GridCore/releases/latest/download/gridcore-darwin-arm64 \
+  -o ~/.local/bin/gridcore && chmod +x ~/.local/bin/gridcore
+
+# 3. Config: point it at your models
 mkdir -p ~/.config/gridcore
-cp examples/apple-24gb.yaml ~/.config/gridcore/config.yaml
+curl -fsSL https://raw.githubusercontent.com/w512/GridCore/master/examples/apple-24gb.yaml \
+  -o ~/.config/gridcore/config.yaml
 $EDITOR ~/.config/gridcore/config.yaml        # paths under models:
 
+# 4. Check, measure, run
 gridcore check                                # Apple M4 Pro, 16384 MB unified memory
 gridcore bench --all
 gridcore serve
@@ -423,13 +430,12 @@ the file).
 
 ## Status and scope
 
-v0.2: one NVIDIA GPU, llama.cpp as the runtime, three classes, residency
-with cost-based eviction, model families, admission as described above.
-Tested on Ubuntu 24.04 with an RTX 4060 Ti 16 GB and llama.cpp b11060.
-See [`CHANGELOG.md`](CHANGELOG.md) for what changed since v0.1.
-
-On master, for v0.3: Apple Silicon (unified memory, llama.cpp with Metal),
-tested on an M4 Pro 24 GB with macOS 15.8 and llama.cpp b11146.
+v0.3: one GPU, NVIDIA (CUDA) or Apple Silicon (Metal, unified memory),
+llama.cpp as the runtime, three classes, residency with cost-based
+eviction, model families, admission as described above, a dashboard.
+Tested on Ubuntu 24.04 with an RTX 4060 Ti 16 GB and llama.cpp b11060, and
+on macOS 15.8 with an M4 Pro 24 GB and llama.cpp b11146. See
+[`CHANGELOG.md`](CHANGELOG.md) for what changed in each version.
 
 Deliberately not yet: cloud fallback, preempting a chat mid-generation,
 vLLM/MLX runtimes, AMD GPUs (APUs with unified memory included), multiple

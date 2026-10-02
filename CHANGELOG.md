@@ -1,10 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-10-02
 
 Apple Silicon: GridCore runs real models on a Mac, through llama.cpp's
 Metal backend. Measured on an M4 Pro 24 GB with macOS 15.8 and llama.cpp
-b11146 (Homebrew).
+b11146 (Homebrew). And a dashboard at `/admin/ui`. On the RTX 4060 Ti the
+v0.2 load tests (mixed, thrash, ambient) give the same results as v0.2.0.
 
 ### Added
 - `gpu.device: apple` (and `auto` on macOS): the device total is Metal's
