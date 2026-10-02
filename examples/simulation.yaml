@@ -1,10 +1,10 @@
 # Runs the whole scheduler on any machine, no GPU required.
 #
-#   gridcore serve --config examples/fake-demo.yaml
+#   gridcore serve --config examples/simulation.yaml
 #   gridcore status --watch
 #
-# The fake runtime answers every request with a canned response after
-# fake_request_delay; the fake GPU has 16 GB. Model sizes mimic a real
+# The simulation runtime answers every request with a canned response after
+# simulated_request_delay; the simulated GPU has 16 GB. Model sizes mimic a real
 # 16 GB card: a 14B chat model, a 7B vision model and a small embedder
 # cannot all be resident at once, so eviction kicks in naturally.
 
@@ -12,16 +12,16 @@ server:
   listen: 127.0.0.1:8080
 
 gpu:
-  device: fake
-  fake_total_mb: 16384
+  device: simulation
+  simulated_total_mb: 16384
   headroom_mb: 512
   poll_interval: 250ms
 
 runtimes:
   sim:
-    type: fake
+    type: simulation
     port_range: [41000, 41999]
-    fake_request_delay: 800ms
+    simulated_request_delay: 800ms
 
 models:
   qwen3-14b:
@@ -29,30 +29,30 @@ models:
     capabilities: [chat]
     parallel: 2
     aliases: [gpt-4o, default-chat]
-    fake_vram_mb: 9600
-    fake_load_time: 6s
+    simulated_vram_mb: 9600
+    simulated_load_time: 6s
 
   qwen2.5-vl-7b:
     runtime: sim
     capabilities: [chat, vision]
     parallel: 1
-    fake_vram_mb: 6200
-    fake_load_time: 4s
+    simulated_vram_mb: 6200
+    simulated_load_time: 4s
 
   qwen3-4b:
     runtime: sim
     capabilities: [chat]
     parallel: 2
-    fake_vram_mb: 3000
-    fake_load_time: 2s
+    simulated_vram_mb: 3000
+    simulated_load_time: 2s
 
   nomic-embed:
     runtime: sim
     capabilities: [embedding]
     parallel: 4
     pinned: true
-    fake_vram_mb: 600
-    fake_load_time: 1s
+    simulated_vram_mb: 600
+    simulated_load_time: 1s
 
 # "model": "qwen3" gets the 14B when it can and the 4B when the 14B would
 # have to evict something (background) or cannot fit at all (interactive).

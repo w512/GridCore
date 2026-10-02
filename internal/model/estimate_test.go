@@ -256,8 +256,8 @@ func TestEstimateFallbacks(t *testing.T) {
 	if e.TotalMB != 0 {
 		t.Errorf("missing file should estimate 0, got %d", e.TotalMB)
 	}
-	e = EstimateVRAM(&Spec{RuntimeType: "fake", FakeVRAMMB: 777})
-	if e.TotalMB != 777 || e.Method != "fake" {
-		t.Errorf("fake = %+v", e)
+	e = EstimateVRAM(&Spec{RuntimeType: "simulation", SimulatedVRAMMB: 777})
+	if e.TotalMB != 777 || e.Method != "simulation" {
+		t.Errorf("simulation = %+v", e)
 	}
 }

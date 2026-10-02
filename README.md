@@ -111,7 +111,7 @@ curl localhost:8080/v1/chat/completions -d '{
 changes. Run `gridcore status --watch` in another terminal to see the
 scheduler work.
 
-No GPU at hand? `gridcore serve --config examples/fake-demo.yaml` runs the
+No GPU at hand? `gridcore serve --config examples/simulation.yaml` runs the
 whole scheduler against a simulated 16 GB card, and `scripts/demo-*.sh`
 replay the two scenarios below.
 
@@ -178,7 +178,7 @@ models are not comparable.
 server: { listen: 127.0.0.1:8080 }
 
 gpu:
-  device: nvidia:0          # or fake
+  device: nvidia:0          # or simulation
   headroom_mb: 512          # budget = min(total, vram_limit_mb) - headroom
   vram_limit_mb: null       # cap GridCore below the card, e.g. to leave room for other apps
 
@@ -278,11 +278,11 @@ use by the chat. Nothing is evicted; four models share the card:
 
 To watch it live, `scripts/demo-tmux.sh` opens a tmux layout with the
 dashboard, a streaming chat client and a background indexer whose progress
-bar visibly pauses while a chat runs (`--fake` starts the simulated GPU
+bar visibly pauses while a chat runs (`--simulation` starts the simulated GPU
 first, so it works on any laptop):
 
 ```
-scripts/demo-tmux.sh --fake
+scripts/demo-tmux.sh --simulation
 ```
 
 `gridcore status --watch` (`cost` is what evicting the model would cost
@@ -354,7 +354,7 @@ authentication, a web dashboard. The architecture has room for all of them.
 make build            # bin/gridcore for this machine
 make linux            # static linux/amd64 binary
 make test             # go test -race ./...
-make run              # serve examples/fake-demo.yaml (no GPU needed)
+make run              # serve examples/simulation.yaml (no GPU needed)
 ```
 
 Go 1.25+, no cgo, two dependencies (`yaml.v3`, `prometheus/client_golang`).

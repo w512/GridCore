@@ -12,10 +12,10 @@ func TestFromConfig(t *testing.T) {
 	cfg, err := config.Parse([]byte(`
 runtimes:
   llamacpp: {binary: /x}
-  sim: {type: fake}
+  sim: {type: simulation}
 models:
   chat: {runtime: llamacpp, path: /m.gguf, capabilities: [chat, vision], ctx: 8192, parallel: 2, args: ["--jinja"], aliases: [gpt-4o]}
-  sim1: {runtime: sim, capabilities: [embedding], pinned: true, fake_vram_mb: 700}
+  sim1: {runtime: sim, capabilities: [embedding], pinned: true, simulated_vram_mb: 700}
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +26,7 @@ models:
 		t.Errorf("chat spec = %+v", c)
 	}
 	s := specs["sim1"]
-	if s.RuntimeType != config.RuntimeFake || !s.Pinned || !s.Preload || s.EstimateVRAMMB() != 700 {
+	if s.RuntimeType != config.RuntimeSimulation || !s.Pinned || !s.Preload || s.EstimateVRAMMB() != 700 {
 		t.Errorf("sim spec = %+v", s)
 	}
 }
@@ -49,11 +49,11 @@ func TestProfileKeyIgnoresArgOrderButNotValues(t *testing.T) {
 	}
 }
 
-func TestProfileKeyFakeModelsDiffer(t *testing.T) {
-	a := &Spec{ID: "a", RuntimeType: "fake", Ctx: 4096, Parallel: 1}
-	b := &Spec{ID: "b", RuntimeType: "fake", Ctx: 4096, Parallel: 1}
-	if a.ProfileKey("fake", "gpu") == b.ProfileKey("fake", "gpu") {
-		t.Error("fake models without a path must not share a profile")
+func TestProfileKeySimulatedModelsDiffer(t *testing.T) {
+	a := &Spec{ID: "a", RuntimeType: "simulation", Ctx: 4096, Parallel: 1}
+	b := &Spec{ID: "b", RuntimeType: "simulation", Ctx: 4096, Parallel: 1}
+	if a.ProfileKey("simulation", "gpu") == b.ProfileKey("simulation", "gpu") {
+		t.Error("simulated models without a path must not share a profile")
 	}
 }
 

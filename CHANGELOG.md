@@ -66,11 +66,11 @@ that fits the moment. Measured on an RTX 4060 Ti 16 GB with llama.cpp b11060.
 - Demo tools: `make tools` builds `bin/gc-chat` (streaming chat with queue
   time, TTFT and tokens/s) and `bin/gc-indexer` (background embedding or
   LLM classification load with a progress bar that visibly pauses);
-  `scripts/demo-tmux.sh` opens the demo layout (`--fake` works without a
+  `scripts/demo-tmux.sh` opens the demo layout (`--simulation` works without a
   GPU); `scripts/gpu-watch.sh` lists GPU processes by GridCore model.
 - `config.example.yaml`: a `gemma4` family, Qwen3.8-27B (IQ4_XS on the GPU,
   Q4_K_M with one layer on the CPU) and Ornith-1.5-35B-A3B with experts in
-  RAM; `examples/fake-demo.yaml`: a `qwen3` family to try without a GPU.
+  RAM; `examples/simulation.yaml`: a `qwen3` family to try without a GPU.
 
 ### Changed
 - Measured profiles are keyed by the llama.cpp build (`llama-server
@@ -119,6 +119,6 @@ that fits the moment. Measured on an RTX 4060 Ti 16 GB with llama.cpp b11060.
 - `gridcore bench` to measure models; `gridcore models --explain` for
   estimate breakdowns; `gridcore status --watch` dashboard; Prometheus
   metrics; `/admin/state`.
-- Fake runtime and fake GPU for running and testing without hardware.
+- Simulated runtime and GPU for running and testing without hardware.
 - `scripts/install-llamacpp.sh`, demo scripts, systemd user unit,
   mixed-class load generator.

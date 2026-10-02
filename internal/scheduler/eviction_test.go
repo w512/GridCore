@@ -10,8 +10,8 @@ import (
 
 // Two models that do not fit together: 5000 + 5000 + headroom > 9488.
 const (
-	modelA = "  a: { runtime: sim, capabilities: [chat], fake_vram_mb: 5000, fake_load_time: 5ms, parallel: 2 }\n"
-	modelB = "  b: { runtime: sim, capabilities: [chat], fake_vram_mb: 5000, fake_load_time: 5ms, parallel: 2 }\n"
+	modelA = "  a: { runtime: sim, capabilities: [chat], simulated_vram_mb: 5000, simulated_load_time: 5ms, parallel: 2 }\n"
+	modelB = "  b: { runtime: sim, capabilities: [chat], simulated_vram_mb: 5000, simulated_load_time: 5ms, parallel: 2 }\n"
 )
 
 func (h *harness) run(c job.Class, modelID string) {
@@ -134,7 +134,7 @@ func TestThrashIsReported(t *testing.T) {
 // other one was touched more recently.
 func TestCostEvictionKeepsModelInDemand(t *testing.T) {
 	models := modelA + modelB +
-		"  c: { runtime: sim, capabilities: [chat], fake_vram_mb: 5000, fake_load_time: 5ms }\n"
+		"  c: { runtime: sim, capabilities: [chat], simulated_vram_mb: 5000, simulated_load_time: 5ms }\n"
 	h := newHarness(t, 16000, models) // a and b fit together, c needs one of them gone
 	for i := 0; i < 10; i++ {
 		h.run(job.Background, "a")
@@ -190,7 +190,7 @@ func TestBatchTakesBackgroundModelWhenOverdue(t *testing.T) {
 
 // An overdue batch job also runs while background work is queued.
 func TestOverdueBatchRunsPastQueuedBackground(t *testing.T) {
-	models := "  a: { runtime: sim, capabilities: [chat], fake_vram_mb: 3000, fake_load_time: 5ms, parallel: 1 }\n" + modelB
+	models := "  a: { runtime: sim, capabilities: [chat], simulated_vram_mb: 3000, simulated_load_time: 5ms, parallel: 1 }\n" + modelB
 	h := newHarness(t, 16000, models)
 	busy := h.submit(job.Background, "a", 1)
 	g := h.grant(busy, wait)                   // a's only slot is taken...

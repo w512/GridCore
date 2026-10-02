@@ -20,7 +20,7 @@ import (
 type Spec struct {
 	ID          string
 	Runtime     string // runtime name in config (e.g. "llamacpp", "llamacpp-hip")
-	RuntimeType string // adapter type (config.RuntimeLlamaCpp | config.RuntimeFake)
+	RuntimeType string // adapter type (config.RuntimeLlamaCpp | config.RuntimeSimulation)
 
 	Path         string
 	MMProj       string
@@ -33,9 +33,9 @@ type Spec struct {
 	Pinned  bool
 	Preload bool
 
-	// Fake-runtime knobs.
-	FakeVRAMMB int
-	FakeLoad   time.Duration
+	// Simulation knobs.
+	SimulatedVRAMMB int
+	SimulatedLoad   time.Duration
 }
 
 // FromConfig materialises Specs for every configured model.
@@ -43,20 +43,20 @@ func FromConfig(cfg *config.Config) map[string]*Spec {
 	out := make(map[string]*Spec, len(cfg.Models))
 	for id, m := range cfg.Models {
 		out[id] = &Spec{
-			ID:           id,
-			Runtime:      m.Runtime,
-			RuntimeType:  cfg.Runtimes[m.Runtime].Type,
-			Path:         m.Path,
-			MMProj:       m.MMProj,
-			Capabilities: append([]string(nil), m.Capabilities...),
-			Ctx:          m.Ctx,
-			Parallel:     m.Parallel,
-			Args:         append([]string(nil), m.Args...),
-			Aliases:      append([]string(nil), m.Aliases...),
-			Pinned:       m.Pinned,
-			Preload:      m.Preload,
-			FakeVRAMMB:   m.FakeVRAMMB,
-			FakeLoad:     m.FakeLoad,
+			ID:              id,
+			Runtime:         m.Runtime,
+			RuntimeType:     cfg.Runtimes[m.Runtime].Type,
+			Path:            m.Path,
+			MMProj:          m.MMProj,
+			Capabilities:    append([]string(nil), m.Capabilities...),
+			Ctx:             m.Ctx,
+			Parallel:        m.Parallel,
+			Args:            append([]string(nil), m.Args...),
+			Aliases:         append([]string(nil), m.Aliases...),
+			Pinned:          m.Pinned,
+			Preload:         m.Preload,
+			SimulatedVRAMMB: m.SimulatedVRAMMB,
+			SimulatedLoad:   m.SimulatedLoad,
 		}
 	}
 	return out
@@ -80,7 +80,7 @@ func (s *Spec) ProfileKey(runtimeID, gpuName string) string {
 	args := append([]string(nil), s.Args...)
 	sort.Strings(args)
 	path := s.Path
-	if path == "" { // fake models have no file; identify them by id
+	if path == "" { // simulated models have no file; identify them by id
 		path = "id:" + s.ID
 	}
 	parts := []string{

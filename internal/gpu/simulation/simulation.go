@@ -1,8 +1,8 @@
-// Package fake is an in-memory GPU monitor for tests and demos.
+// Package simulation is an in-memory GPU monitor for tests and demos.
 //
-// The fake runtime attaches/detaches its instances here so the scheduler
+// The simulation runtime attaches/detaches its instances here so the scheduler
 // sees exactly the same per-PID accounting it would get from nvidia-smi.
-package fake
+package simulation
 
 import (
 	"context"
@@ -25,7 +25,7 @@ type Monitor struct {
 	util      int
 }
 
-// New creates a fake GPU with the given capacity.
+// New creates a simulated GPU with the given capacity.
 func New(name string, totalMB int) *Monitor {
 	return &Monitor{name: name, totalMB: totalMB, procs: map[int]int{}, lingering: map[int]int{}}
 }

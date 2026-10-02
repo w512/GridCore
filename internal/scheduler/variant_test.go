@@ -12,9 +12,9 @@ import (
 
 // Budget 15488 (16000 - 512 headroom). big + other do not fit together.
 const familyModels = "" +
-	"  big:   { runtime: sim, capabilities: [chat], fake_vram_mb: 8000, fake_load_time: 5ms, parallel: 2 }\n" +
-	"  small: { runtime: sim, capabilities: [chat], fake_vram_mb: 3000, fake_load_time: 5ms, parallel: 2 }\n" +
-	"  other: { runtime: sim, capabilities: [chat], fake_vram_mb: 9000, fake_load_time: 5ms, parallel: 1 }\n"
+	"  big:   { runtime: sim, capabilities: [chat], simulated_vram_mb: 8000, simulated_load_time: 5ms, parallel: 2 }\n" +
+	"  small: { runtime: sim, capabilities: [chat], simulated_vram_mb: 3000, simulated_load_time: 5ms, parallel: 2 }\n" +
+	"  other: { runtime: sim, capabilities: [chat], simulated_vram_mb: 9000, simulated_load_time: 5ms, parallel: 1 }\n"
 
 func (h *harness) submitFamily(c job.Class, variants ...string) *Handle {
 	h.t.Helper()

@@ -11,7 +11,7 @@
 #
 #   scripts/demo-tmux.sh                 # against a running gridcore at 127.0.0.1:8080
 #   GRIDCORE_ADDR=host:port scripts/demo-tmux.sh
-#   scripts/demo-tmux.sh --fake          # also start gridcore on examples/fake-demo.yaml
+#   scripts/demo-tmux.sh --simulation    # also start gridcore on examples/simulation.yaml
 #   INDEXER_ARGS="-model tiny -kind chat -loop" scripts/demo-tmux.sh
 #
 # The chat pane waits for you to type; the indexer pane has the command
@@ -22,8 +22,8 @@ command -v tmux >/dev/null || { echo "tmux is required" >&2; exit 1; }
 
 ADDR="${GRIDCORE_ADDR:-127.0.0.1:8080}"
 SESSION="${SESSION:-gridcore-demo}"
-FAKE=0
-[[ "${1:-}" == "--fake" ]] && FAKE=1
+SIM=0
+[[ "${1:-}" == "--simulation" ]] && SIM=1
 
 # Build the demo tools into bin/ so panes start instantly.
 mkdir -p bin
@@ -31,9 +31,9 @@ go build -o bin/gridcore ./cmd/gridcore
 go build -o bin/gc-chat ./scripts/chat
 go build -o bin/gc-indexer ./scripts/demo-indexer
 
-if [[ $FAKE == 1 ]]; then
+if [[ $SIM == 1 ]]; then
   if ! curl -sf "http://$ADDR/health" >/dev/null 2>&1; then
-    bin/gridcore serve --config examples/fake-demo.yaml --state-dir /tmp/gridcore-demo-state > /tmp/gridcore-demo.log 2>&1 &
+    bin/gridcore serve --config examples/simulation.yaml --state-dir /tmp/gridcore-demo-state > /tmp/gridcore-demo.log 2>&1 &
     for _ in $(seq 1 30); do curl -sf "http://$ADDR/health" >/dev/null 2>&1 && break; sleep 0.2; done
   fi
 fi
@@ -46,7 +46,7 @@ if [[ -n "${BOTTOM:-}" ]]; then
   :
 elif command -v nvidia-smi >/dev/null; then
   BOTTOM="scripts/gpu-watch.sh"
-elif [[ $FAKE == 1 ]]; then
+elif [[ $SIM == 1 ]]; then
   BOTTOM="tail -f /tmp/gridcore-demo.log"
 else
   BOTTOM="echo 'no GPU tooling here'; sleep infinity"

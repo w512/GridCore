@@ -2,7 +2,7 @@
 # Demo 1: background indexing keeps running, an interactive chat arrives and
 # gets the GPU immediately; indexing resumes once the user is done.
 #
-#   gridcore serve --config examples/fake-demo.yaml &   # or a real config
+#   gridcore serve --config examples/simulation.yaml &   # or a real config
 #   scripts/demo-background-vs-interactive.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."

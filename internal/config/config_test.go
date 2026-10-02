@@ -260,22 +260,22 @@ func TestValidateErrors(t *testing.T) {
 	}
 }
 
-func TestFakeRuntimeNeedsNoPath(t *testing.T) {
+func TestSimulationRuntimeNeedsNoPath(t *testing.T) {
 	src := `
 runtimes:
-  sim: {type: fake}
+  sim: {type: simulation}
 models:
-  m: {runtime: sim, capabilities: [chat], fake_vram_mb: 9000, fake_load_time: 3s}
+  m: {runtime: sim, capabilities: [chat], simulated_vram_mb: 9000, simulated_load_time: 3s}
 `
 	c, err := Parse([]byte(src))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if c.Models["m"].FakeVRAMMB != 9000 || c.Models["m"].FakeLoad != 3*time.Second {
-		t.Errorf("fake knobs = %+v", c.Models["m"])
+	if c.Models["m"].SimulatedVRAMMB != 9000 || c.Models["m"].SimulatedLoad != 3*time.Second {
+		t.Errorf("simulation knobs = %+v", c.Models["m"])
 	}
 	if err := c.CheckFiles(); err != nil {
-		t.Errorf("CheckFiles should skip fake runtimes: %v", err)
+		t.Errorf("CheckFiles should skip simulation runtimes: %v", err)
 	}
 }
 
@@ -332,12 +332,12 @@ func TestExampleConfigIsValid(t *testing.T) {
 
 const familyModels = `
 runtimes:
-  sim: {type: fake}
+  sim: {type: simulation}
 models:
-  big:   {runtime: sim, capabilities: [chat, vision], fake_vram_mb: 8000, aliases: [gpt-4o]}
-  mid:   {runtime: sim, capabilities: [chat, vision], fake_vram_mb: 4000}
-  small: {runtime: sim, capabilities: [chat], fake_vram_mb: 3000}
-  embed: {runtime: sim, capabilities: [embedding], fake_vram_mb: 400}
+  big:   {runtime: sim, capabilities: [chat, vision], simulated_vram_mb: 8000, aliases: [gpt-4o]}
+  mid:   {runtime: sim, capabilities: [chat, vision], simulated_vram_mb: 4000}
+  small: {runtime: sim, capabilities: [chat], simulated_vram_mb: 3000}
+  embed: {runtime: sim, capabilities: [embedding], simulated_vram_mb: 400}
 `
 
 func TestFamilies(t *testing.T) {

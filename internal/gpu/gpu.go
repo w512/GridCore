@@ -2,7 +2,7 @@
 //
 // The scheduler polls Monitor.Snapshot at gpu.poll_interval and attributes
 // per-process usage to model instances by PID. Implementations: nvidia
-// (nvidia-smi), fake (in-memory, driven by the fake runtime), and later
+// (nvidia-smi), simulation (in-memory, driven by the simulation runtime), and later
 // amdgpu (sysfs) and unified-memory devices.
 package gpu
 

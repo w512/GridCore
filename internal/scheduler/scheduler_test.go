@@ -13,18 +13,18 @@ import (
 
 	"github.com/w512/gridcore/internal/config"
 	"github.com/w512/gridcore/internal/gpu"
-	gpufake "github.com/w512/gridcore/internal/gpu/fake"
+	gpusim "github.com/w512/gridcore/internal/gpu/simulation"
 	"github.com/w512/gridcore/internal/job"
 	"github.com/w512/gridcore/internal/runtime"
-	rtfake "github.com/w512/gridcore/internal/runtime/fake"
+	rtsim "github.com/w512/gridcore/internal/runtime/simulation"
 )
 
 const (
-	chat   = "  chat:   { runtime: sim, capabilities: [chat], fake_vram_mb: 9000, fake_load_time: 20ms, parallel: 1 }\n"
-	chat2  = "  chat2:  { runtime: sim, capabilities: [chat], fake_vram_mb: 9000, fake_load_time: 20ms, parallel: 1 }\n"
-	vision = "  vision: { runtime: sim, capabilities: [chat, vision], fake_vram_mb: 6000, fake_load_time: 20ms, parallel: 1 }\n"
-	embed  = "  embed:  { runtime: sim, capabilities: [embedding], fake_vram_mb: 600, fake_load_time: 10ms, parallel: 4 }\n"
-	pinned = "  embed:  { runtime: sim, capabilities: [embedding], fake_vram_mb: 600, fake_load_time: 10ms, parallel: 4, pinned: true }\n"
+	chat   = "  chat:   { runtime: sim, capabilities: [chat], simulated_vram_mb: 9000, simulated_load_time: 20ms, parallel: 1 }\n"
+	chat2  = "  chat2:  { runtime: sim, capabilities: [chat], simulated_vram_mb: 9000, simulated_load_time: 20ms, parallel: 1 }\n"
+	vision = "  vision: { runtime: sim, capabilities: [chat, vision], simulated_vram_mb: 6000, simulated_load_time: 20ms, parallel: 1 }\n"
+	embed  = "  embed:  { runtime: sim, capabilities: [embedding], simulated_vram_mb: 600, simulated_load_time: 10ms, parallel: 4 }\n"
+	pinned = "  embed:  { runtime: sim, capabilities: [embedding], simulated_vram_mb: 600, simulated_load_time: 10ms, parallel: 4, pinned: true }\n"
 )
 
 const wait = 3 * time.Second
@@ -72,7 +72,7 @@ func TestInteractiveFirstStrictOrder(t *testing.T) {
 }
 
 func TestBackgroundYieldsBetweenSteps(t *testing.T) {
-	h := newHarness(t, 16000, chat+"  embed:  { runtime: sim, capabilities: [embedding], fake_vram_mb: 600, fake_load_time: 10ms, parallel: 1 }\n")
+	h := newHarness(t, 16000, chat+"  embed:  { runtime: sim, capabilities: [embedding], simulated_vram_mb: 600, simulated_load_time: 10ms, parallel: 1 }\n")
 	bg := h.submit(job.Background, "embed", 10)
 
 	g0 := h.grant(bg, wait)
@@ -267,7 +267,7 @@ func TestDrainBeforeStop(t *testing.T) {
 }
 
 func TestMaxWaitTimeout(t *testing.T) {
-	h := newHarness(t, 16000, "  slow: { runtime: sim, capabilities: [chat], fake_vram_mb: 9000, fake_load_time: 500ms }\n")
+	h := newHarness(t, 16000, "  slow: { runtime: sim, capabilities: [chat], simulated_vram_mb: 9000, simulated_load_time: 500ms }\n")
 	inter := h.submit(job.Interactive, "slow", 1, withMaxWait(20*time.Millisecond))
 	h.clock.Advance(25 * time.Millisecond)
 	err := h.finish(inter, wait)
@@ -411,7 +411,7 @@ func TestReservationsPreventOvercommit(t *testing.T) {
 }
 
 func TestParallelSlotsRespected(t *testing.T) {
-	h := newHarness(t, 16000, "  chat: { runtime: sim, capabilities: [chat], fake_vram_mb: 9000, fake_load_time: 10ms, parallel: 2 }\n")
+	h := newHarness(t, 16000, "  chat: { runtime: sim, capabilities: [chat], simulated_vram_mb: 9000, simulated_load_time: 10ms, parallel: 2 }\n")
 	var hs []*Handle
 	for i := 0; i < 5; i++ {
 		hs = append(hs, h.submit(job.Interactive, "chat", 1))
@@ -569,9 +569,9 @@ func TestEvictsOnlyAsMuchAsNeeded(t *testing.T) {
 	// 1 GB model requested. One victim frees plenty, but while it drained
 	// the planner re-ran, saw no free memory yet, and evicted the second
 	// model too. Memory of draining instances must count as pending.
-	models := "  a: { runtime: sim, capabilities: [chat], fake_vram_mb: 7000, fake_load_time: 10ms }\n" +
-		"  b: { runtime: sim, capabilities: [chat], fake_vram_mb: 7000, fake_load_time: 10ms }\n" +
-		"  c: { runtime: sim, capabilities: [chat], fake_vram_mb: 1000, fake_load_time: 10ms }\n"
+	models := "  a: { runtime: sim, capabilities: [chat], simulated_vram_mb: 7000, simulated_load_time: 10ms }\n" +
+		"  b: { runtime: sim, capabilities: [chat], simulated_vram_mb: 7000, simulated_load_time: 10ms }\n" +
+		"  c: { runtime: sim, capabilities: [chat], simulated_vram_mb: 1000, simulated_load_time: 10ms }\n"
 	h := newHarness(t, 16000, models)
 	h.rt.StopDelay = 200 * time.Millisecond // teardown takes many ticks
 	for _, id := range []string{"a", "b"} {
@@ -617,9 +617,9 @@ func TestTeardownMemoryNotMistakenForExternal(t *testing.T) {
 	// list in two calls, so for one poll the dying process's memory showed up
 	// as unattributed "external" usage. With ~11 GB "external" the second
 	// model was evicted too, in the same millisecond the first one unloaded.
-	models := "  big:   { runtime: sim, capabilities: [chat], fake_vram_mb: 10000, fake_load_time: 10ms }\n" +
-		"  mid:   { runtime: sim, capabilities: [chat], fake_vram_mb: 4000, fake_load_time: 10ms }\n" +
-		"  small: { runtime: sim, capabilities: [chat], fake_vram_mb: 2900, fake_load_time: 40ms }\n"
+	models := "  big:   { runtime: sim, capabilities: [chat], simulated_vram_mb: 10000, simulated_load_time: 10ms }\n" +
+		"  mid:   { runtime: sim, capabilities: [chat], simulated_vram_mb: 4000, simulated_load_time: 10ms }\n" +
+		"  small: { runtime: sim, capabilities: [chat], simulated_vram_mb: 2900, simulated_load_time: 40ms }\n"
 	h := newHarness(t, 16000, models)
 	h.rt.StopDelay = 50 * time.Millisecond      // Stopping spans several polls...
 	h.rt.TeardownLinger = 90 * time.Millisecond // ...and the memory outlives Stop
@@ -689,13 +689,13 @@ func TestOOMDiscardsProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.eventually(notResident("chat"), "unloaded")
-	key := h.s.specs["chat"].ProfileKey("fake", "FakeGPU")
+	key := h.s.specs["chat"].ProfileKey("simulation", "Simulated GPU")
 	if p, ok := h.s.store.Get(key); !ok || p.VRAMMB != 9000 {
 		t.Fatalf("profile after first load = %+v ok=%v", p, ok)
 	}
 
 	// Next load hits OOM: the profile must be discarded, the job fails.
-	h.rt.SetFailLoad(&rtfake.OOMError{Msg: "failed to allocate CUDA0 buffer"})
+	h.rt.SetFailLoad(&rtsim.OOMError{Msg: "failed to allocate CUDA0 buffer"})
 	b := h.submit(job.Interactive, "chat", 1)
 	if err := h.finish(b, wait); !errors.Is(err, ErrLoadFailed) {
 		t.Fatalf("want ErrLoadFailed, got %v", err)
@@ -834,7 +834,7 @@ func TestBackgroundShareSpacesGuardSteps(t *testing.T) {
 }
 
 // completed waits until the scheduler has processed n finished steps of hd
-// (StepDone is asynchronous; the fake clock must not move before that).
+// (StepDone is asynchronous; the test clock must not move before that).
 func (h *harness) completed(hd *Handle, n int) {
 	h.t.Helper()
 	h.eventually(func(st State) bool {
@@ -897,31 +897,31 @@ func TestStarvationGuardSkipsUnloadableHead(t *testing.T) {
 
 func TestNewRejectsPinnedLargerThanLimit(t *testing.T) {
 	cfg, err := config.Parse([]byte(`
-gpu: { device: fake, vram_limit_mb: 4000, headroom_mb: 512 }
+gpu: { device: simulation, vram_limit_mb: 4000, headroom_mb: 512 }
 runtimes:
-  sim: { type: fake }
+  sim: { type: simulation }
 models:
-  big:   { runtime: sim, capabilities: [embedding], fake_vram_mb: 3000, pinned: true }
-  small: { runtime: sim, capabilities: [embedding], fake_vram_mb: 500, pinned: true }
+  big:   { runtime: sim, capabilities: [embedding], simulated_vram_mb: 3000, pinned: true }
+  small: { runtime: sim, capabilities: [embedding], simulated_vram_mb: 500, pinned: true }
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	gpu := gpufake.New("FakeGPU", 16000)
-	_, err = New(cfg, map[string]runtime.Runtime{"sim": rtfake.New("sim", gpu)}, gpu, nil, nil, Options{})
+	gpu := gpusim.New("Simulated GPU", 16000)
+	_, err = New(cfg, map[string]runtime.Runtime{"sim": rtsim.New("sim", gpu)}, gpu, nil, nil, Options{})
 	if err == nil || !strings.Contains(err.Error(), "pinned models") {
 		t.Fatalf("expected pinned-fit error, got %v", err)
 	}
 	// Same models, no limit: fine (the device decides at runtime).
 	cfg2, _ := config.Parse([]byte(`
-gpu: { device: fake, headroom_mb: 512 }
+gpu: { device: simulation, headroom_mb: 512 }
 runtimes:
-  sim: { type: fake }
+  sim: { type: simulation }
 models:
-  big:   { runtime: sim, capabilities: [embedding], fake_vram_mb: 3000, pinned: true }
-  small: { runtime: sim, capabilities: [embedding], fake_vram_mb: 500, pinned: true }
+  big:   { runtime: sim, capabilities: [embedding], simulated_vram_mb: 3000, pinned: true }
+  small: { runtime: sim, capabilities: [embedding], simulated_vram_mb: 500, pinned: true }
 `))
-	if _, err := New(cfg2, map[string]runtime.Runtime{"sim": rtfake.New("sim", gpu)}, gpu, nil, nil, Options{}); err != nil {
+	if _, err := New(cfg2, map[string]runtime.Runtime{"sim": rtsim.New("sim", gpu)}, gpu, nil, nil, Options{}); err != nil {
 		t.Fatalf("without vram_limit_mb New must succeed: %v", err)
 	}
 }
@@ -943,19 +943,19 @@ func (m *flakyMonitor) Snapshot(ctx context.Context) (gpu.Snapshot, error) {
 
 func TestStartupRetriesFlakyGPU(t *testing.T) {
 	cfg, err := config.Parse([]byte(`
-gpu: { device: fake, headroom_mb: 512, poll_interval: 10ms }
+gpu: { device: simulation, headroom_mb: 512, poll_interval: 10ms }
 runtimes:
-  sim: { type: fake, port_range: [46000, 46049] }
+  sim: { type: simulation, port_range: [46000, 46049] }
 models:
-  embed: { runtime: sim, capabilities: [embedding], fake_vram_mb: 600, pinned: true }
+  embed: { runtime: sim, capabilities: [embedding], simulated_vram_mb: 600, pinned: true }
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := gpufake.New("FakeGPU", 16000)
-	mon := &flakyMonitor{inner: fake}
+	sim := gpusim.New("Simulated GPU", 16000)
+	mon := &flakyMonitor{inner: sim}
 	mon.remain.Store(2) // first two snapshots fail, third succeeds
-	rt := rtfake.New("sim", fake)
+	rt := rtsim.New("sim", sim)
 	s, err := New(cfg, map[string]runtime.Runtime{"sim": rt}, mon, nil, nil, Options{
 		Tick: 5 * time.Millisecond, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})

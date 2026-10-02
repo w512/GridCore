@@ -221,8 +221,8 @@ func RuntimeID(rc config.Runtime, rt runtime.Runtime) string {
 }
 
 func binaryID(rc config.Runtime) string {
-	if rc.Type == config.RuntimeFake {
-		return "fake"
+	if rc.Type == config.RuntimeSimulation {
+		return "simulation"
 	}
 	st, err := os.Stat(rc.Binary)
 	if err != nil {

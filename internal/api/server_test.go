@@ -16,11 +16,11 @@ import (
 	"time"
 
 	"github.com/w512/gridcore/internal/config"
-	gpufake "github.com/w512/gridcore/internal/gpu/fake"
+	gpusim "github.com/w512/gridcore/internal/gpu/simulation"
 	"github.com/w512/gridcore/internal/metrics"
 	"github.com/w512/gridcore/internal/model"
 	"github.com/w512/gridcore/internal/runtime"
-	rtfake "github.com/w512/gridcore/internal/runtime/fake"
+	rtsim "github.com/w512/gridcore/internal/runtime/simulation"
 	"github.com/w512/gridcore/internal/scheduler"
 )
 
@@ -29,21 +29,21 @@ var portBase atomic.Int64
 func init() { portBase.Store(45000) }
 
 const liveYAML = `
-gpu: { device: fake, headroom_mb: 512, poll_interval: 10ms }
+gpu: { device: simulation, headroom_mb: 512, poll_interval: 10ms }
 runtimes:
-  sim: { type: fake, port_range: [%d, %d] }
+  sim: { type: simulation, port_range: [%d, %d] }
 policy:
   embedding_chunk_size: 4
   interactive_idle_before_background: 10ms
 models:
-  chat:  { runtime: sim, capabilities: [chat], aliases: [gpt-4o], fake_vram_mb: 9000, fake_load_time: 10ms, parallel: 2 }
-  embed: { runtime: sim, capabilities: [embedding], fake_vram_mb: 600, fake_load_time: 5ms, parallel: 4, pinned: true }
-  slow:  { runtime: sim, capabilities: [chat], fake_vram_mb: 1000, fake_load_time: 400ms }
+  chat:  { runtime: sim, capabilities: [chat], aliases: [gpt-4o], simulated_vram_mb: 9000, simulated_load_time: 10ms, parallel: 2 }
+  embed: { runtime: sim, capabilities: [embedding], simulated_vram_mb: 600, simulated_load_time: 5ms, parallel: 4, pinned: true }
+  slow:  { runtime: sim, capabilities: [chat], simulated_vram_mb: 1000, simulated_load_time: 400ms }
 `
 
 type live struct {
 	ts    *httptest.Server
-	rt    *rtfake.Runtime
+	rt    *rtsim.Runtime
 	sched *scheduler.Scheduler
 	cfg   *config.Config
 }
@@ -61,8 +61,8 @@ func newLiveWith(t *testing.T, extra string) *live {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gpu := gpufake.New("FakeGPU", 16000)
-	rt := rtfake.New("sim", gpu)
+	gpu := gpusim.New("Simulated GPU", 16000)
+	rt := rtsim.New("sim", gpu)
 	rt.RequestDelay = 5 * time.Millisecond
 	store, _ := model.OpenStore("")
 	sched, err := scheduler.New(cfg, map[string]runtime.Runtime{"sim": rt}, gpu, store, metrics.New(), scheduler.Options{
@@ -167,7 +167,7 @@ func TestMetricsEndpoint(t *testing.T) {
 }
 
 func TestNoSchedulerAnswers503(t *testing.T) {
-	cfg, _ := config.Parse([]byte("runtimes:\n  sim: {type: fake}\nmodels:\n  chat: {runtime: sim, capabilities: [chat], fake_vram_mb: 1}\n"))
+	cfg, _ := config.Parse([]byte("runtimes:\n  sim: {type: simulation}\nmodels:\n  chat: {runtime: sim, capabilities: [chat], simulated_vram_mb: 1}\n"))
 	ts := httptest.NewServer(New(cfg, metrics.New(), nil, "test").Handler())
 	defer ts.Close()
 	resp, _ := http.Post(ts.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"chat"}`))
@@ -251,7 +251,7 @@ func TestEmbeddingsChunked(t *testing.T) {
 			t.Errorf("item %d has index %v", i, item["index"])
 		}
 		emb := item["embedding"].([]any)
-		// fake encodes the chunk-local index in the last dimension: 0..3, 0..3, 0..1
+		// the simulation encodes the chunk-local index in the last dimension: 0..3, 0..3, 0..1
 		if int(emb[7].(float64)) != i%4 {
 			t.Errorf("item %d embedding marker %v, want %d", i, emb[7], i%4)
 		}

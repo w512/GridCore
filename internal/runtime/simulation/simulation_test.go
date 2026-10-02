@@ -1,4 +1,4 @@
-package fake
+package simulation
 
 import (
 	"bytes"
@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	gpufake "github.com/w512/gridcore/internal/gpu/fake"
+	gpusim "github.com/w512/gridcore/internal/gpu/simulation"
 	"github.com/w512/gridcore/internal/model"
 	"github.com/w512/gridcore/internal/runtime"
 )
@@ -27,10 +27,10 @@ func freePort(t *testing.T) int {
 }
 
 func TestLoadServeStop(t *testing.T) {
-	gpu := gpufake.New("fake", 16000)
+	gpu := gpusim.New("simulation", 16000)
 	rt := New("sim", gpu)
 	rt.RequestDelay = 5 * time.Millisecond
-	spec := &model.Spec{ID: "m", RuntimeType: "fake", FakeVRAMMB: 9000, FakeLoad: 10 * time.Millisecond}
+	spec := &model.Spec{ID: "m", RuntimeType: "simulation", SimulatedVRAMMB: 9000, SimulatedLoad: 10 * time.Millisecond}
 
 	ctx := context.Background()
 	start := time.Now()
@@ -38,8 +38,8 @@ func TestLoadServeStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if time.Since(start) < spec.FakeLoad {
-		t.Error("load should take at least fake_load_time")
+	if time.Since(start) < spec.SimulatedLoad {
+		t.Error("load should take at least simulated_load_time")
 	}
 	if err := inst.Health(ctx); err != nil {
 		t.Fatalf("health: %v", err)
@@ -102,7 +102,7 @@ func TestLoadServeStop(t *testing.T) {
 func TestConcurrencyTracking(t *testing.T) {
 	rt := New("sim", nil)
 	rt.RequestDelay = 30 * time.Millisecond
-	spec := &model.Spec{ID: "m", RuntimeType: "fake"}
+	spec := &model.Spec{ID: "m", RuntimeType: "simulation"}
 	inst, err := rt.Load(context.Background(), spec, freePort(t))
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +129,7 @@ func TestConcurrencyTracking(t *testing.T) {
 
 func TestLoadCancelled(t *testing.T) {
 	rt := New("sim", nil)
-	spec := &model.Spec{ID: "m", RuntimeType: "fake", FakeLoad: time.Second}
+	spec := &model.Spec{ID: "m", RuntimeType: "simulation", SimulatedLoad: time.Second}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(10 * time.Millisecond); cancel() }()
 	_, err := rt.Load(ctx, spec, freePort(t))
@@ -141,7 +141,7 @@ func TestLoadCancelled(t *testing.T) {
 func TestLoadTimeout(t *testing.T) {
 	rt := New("sim", nil)
 	rt.LoadTimeout = 10 * time.Millisecond
-	spec := &model.Spec{ID: "m", RuntimeType: "fake", FakeLoad: time.Second}
+	spec := &model.Spec{ID: "m", RuntimeType: "simulation", SimulatedLoad: time.Second}
 	_, err := rt.Load(context.Background(), spec, freePort(t))
 	if !errors.Is(err, runtime.ErrLoadTimeout) {
 		t.Fatalf("want ErrLoadTimeout, got %v", err)
@@ -149,9 +149,9 @@ func TestLoadTimeout(t *testing.T) {
 }
 
 func TestKillClosesDone(t *testing.T) {
-	gpu := gpufake.New("fake", 16000)
+	gpu := gpusim.New("simulation", 16000)
 	rt := New("sim", gpu)
-	spec := &model.Spec{ID: "m", RuntimeType: "fake", FakeVRAMMB: 100}
+	spec := &model.Spec{ID: "m", RuntimeType: "simulation", SimulatedVRAMMB: 100}
 	inst, err := rt.Load(context.Background(), spec, freePort(t))
 	if err != nil {
 		t.Fatal(err)

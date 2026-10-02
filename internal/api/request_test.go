@@ -17,11 +17,11 @@ func parseCfg(t *testing.T) *config.Config {
 	t.Helper()
 	cfg, err := config.Parse([]byte(`
 runtimes:
-  sim: {type: fake}
+  sim: {type: simulation}
 models:
-  chat:  {runtime: sim, capabilities: [chat], aliases: [gpt-4o], fake_vram_mb: 9000}
-  raw:   {runtime: sim, capabilities: [completion], fake_vram_mb: 1000}
-  embed: {runtime: sim, capabilities: [embedding], fake_vram_mb: 600}
+  chat:  {runtime: sim, capabilities: [chat], aliases: [gpt-4o], simulated_vram_mb: 9000}
+  raw:   {runtime: sim, capabilities: [completion], simulated_vram_mb: 1000}
+  embed: {runtime: sim, capabilities: [embedding], simulated_vram_mb: 600}
 policy:
   embedding_chunk_size: 4
 `))
@@ -224,11 +224,11 @@ func familyCfg(t *testing.T) *config.Config {
 	t.Helper()
 	cfg, err := config.Parse([]byte(`
 runtimes:
-  sim: {type: fake}
+  sim: {type: simulation}
 models:
-  big:   {runtime: sim, capabilities: [chat, vision], fake_vram_mb: 8000}
-  mid:   {runtime: sim, capabilities: [chat, audio], fake_vram_mb: 4000}
-  small: {runtime: sim, capabilities: [chat, vision], fake_vram_mb: 3000}
+  big:   {runtime: sim, capabilities: [chat, vision], simulated_vram_mb: 8000}
+  mid:   {runtime: sim, capabilities: [chat, audio], simulated_vram_mb: 4000}
+  small: {runtime: sim, capabilities: [chat, vision], simulated_vram_mb: 3000}
 families:
   gemma: {preferred: big, balanced: mid, compact: small, aliases: [default-chat]}
 `))

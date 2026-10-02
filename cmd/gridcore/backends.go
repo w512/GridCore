@@ -10,11 +10,11 @@ import (
 
 	"github.com/w512/gridcore/internal/config"
 	"github.com/w512/gridcore/internal/gpu"
-	gpufake "github.com/w512/gridcore/internal/gpu/fake"
 	"github.com/w512/gridcore/internal/gpu/nvidia"
+	gpusim "github.com/w512/gridcore/internal/gpu/simulation"
 	"github.com/w512/gridcore/internal/runtime"
-	rtfake "github.com/w512/gridcore/internal/runtime/fake"
 	"github.com/w512/gridcore/internal/runtime/llamacpp"
+	rtsim "github.com/w512/gridcore/internal/runtime/simulation"
 )
 
 // buildBackends constructs the GPU monitor and runtime adapters from config.
@@ -22,20 +22,20 @@ import (
 // recorded for orphan cleanup on the next start.
 func buildBackends(cfg *config.Config, stateDir string) (gpu.Monitor, map[string]runtime.Runtime, error) {
 	var mon gpu.Monitor
-	var fakeMon *gpufake.Monitor
+	var simMon *gpusim.Monitor
 
 	device := cfg.GPU.Device
 	if device == "auto" {
 		if _, err := exec.LookPath("nvidia-smi"); err == nil {
 			device = "nvidia:0"
 		} else {
-			return nil, nil, fmt.Errorf("gpu.device auto: no supported GPU tooling found (nvidia-smi); set gpu.device explicitly (nvidia:N or fake)")
+			return nil, nil, fmt.Errorf("gpu.device auto: no supported GPU tooling found (nvidia-smi); set gpu.device explicitly (nvidia:N or simulation)")
 		}
 	}
 	switch {
-	case device == "fake":
-		fakeMon = gpufake.New("FakeGPU", cfg.GPU.FakeTotalMB)
-		mon = fakeMon
+	case device == "simulation":
+		simMon = gpusim.New("Simulated GPU", cfg.GPU.SimulatedTotalMB)
+		mon = simMon
 	case strings.HasPrefix(device, "nvidia:"):
 		idx, err := strconv.Atoi(strings.TrimPrefix(device, "nvidia:"))
 		if err != nil {
@@ -49,9 +49,9 @@ func buildBackends(cfg *config.Config, stateDir string) (gpu.Monitor, map[string
 	runtimes := map[string]runtime.Runtime{}
 	for name, rc := range cfg.Runtimes {
 		switch rc.Type {
-		case config.RuntimeFake:
-			rt := rtfake.New(name, fakeMon)
-			rt.RequestDelay = rc.FakeRequestDelay
+		case config.RuntimeSimulation:
+			rt := rtsim.New(name, simMon)
+			rt.RequestDelay = rc.SimulatedRequestDelay
 			rt.LoadTimeout = rc.LoadTimeout
 			runtimes[name] = rt
 		case config.RuntimeLlamaCpp:

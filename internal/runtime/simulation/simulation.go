@@ -1,11 +1,11 @@
-// Package fake is a simulated inference runtime.
+// Package simulation is a simulated inference runtime.
 //
 // It behaves like llama-server from the scheduler's point of view: Load takes
-// the model's fake_load_time, the instance serves a minimal OpenAI-compatible
-// HTTP API on the assigned port, and its "VRAM" (fake_vram_mb) is registered
-// with a fake GPU monitor by PID. This lets the whole scheduler run and be
+// the model's simulated_load_time, the instance serves a minimal OpenAI-compatible
+// HTTP API on the assigned port, and its "VRAM" (simulated_vram_mb) is registered
+// with a simulated GPU monitor by PID. This lets the whole scheduler run and be
 // tested on a machine with no GPU at all.
-package fake
+package simulation
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	gpufake "github.com/w512/gridcore/internal/gpu/fake"
+	gpusim "github.com/w512/gridcore/internal/gpu/simulation"
 	"github.com/w512/gridcore/internal/model"
 	"github.com/w512/gridcore/internal/runtime"
 )
@@ -34,12 +34,12 @@ var healthClient = &http.Client{Timeout: 2 * time.Second}
 // Runtime implements runtime.Runtime.
 type Runtime struct {
 	name string
-	gpu  *gpufake.Monitor
+	gpu  *gpusim.Monitor
 
 	// RequestDelay is how long each simulated request takes. Tests use small
 	// values; demos use realistic ones.
 	RequestDelay time.Duration
-	// LoadTimeout bounds Load regardless of fake_load_time.
+	// LoadTimeout bounds Load regardless of simulated_load_time.
 	LoadTimeout time.Duration
 	// StopDelay makes Stop take this long, simulating process teardown.
 	StopDelay time.Duration
@@ -76,9 +76,9 @@ func (r *Runtime) failStatus() int {
 // OOMError simulates a device out-of-memory failure during load.
 type OOMError struct{ Msg string }
 
-func (e *OOMError) Error() string { return "fake: " + e.Msg }
+func (e *OOMError) Error() string { return "simulation: " + e.Msg }
 func (e *OOMError) OOM() bool     { return true }
-func (e *OOMError) Tail() string  { return "--- fake output ---\n" + e.Msg }
+func (e *OOMError) Tail() string  { return "--- simulated output ---\n" + e.Msg }
 
 // SetFailLoad changes FailLoad safely while loads may be in progress.
 func (r *Runtime) SetFailLoad(err error) {
@@ -120,8 +120,8 @@ func (r *Runtime) Instance(id string) *Instance {
 	return nil
 }
 
-// New creates a fake runtime that reports VRAM into gpu.
-func New(name string, gpu *gpufake.Monitor) *Runtime {
+// New creates a simulation runtime that reports VRAM into gpu.
+func New(name string, gpu *gpusim.Monitor) *Runtime {
 	return &Runtime{name: name, gpu: gpu, RequestDelay: 20 * time.Millisecond, LoadTimeout: 30 * time.Second}
 }
 
@@ -134,7 +134,7 @@ func (r *Runtime) Load(ctx context.Context, spec *model.Spec, port int) (runtime
 
 	// Simulate weights loading.
 	select {
-	case <-time.After(spec.FakeLoad):
+	case <-time.After(spec.SimulatedLoad):
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, runtime.ErrLoadTimeout
@@ -147,7 +147,7 @@ func (r *Runtime) Load(ctx context.Context, spec *model.Spec, port int) (runtime
 
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
-		return nil, fmt.Errorf("fake runtime: listen: %w", err)
+		return nil, fmt.Errorf("simulation runtime: listen: %w", err)
 	}
 
 	inst := &Instance{
@@ -171,7 +171,7 @@ func (r *Runtime) Load(ctx context.Context, spec *model.Spec, port int) (runtime
 		inst.closeDone()
 	}()
 	if r.gpu != nil {
-		r.gpu.Attach(inst.pid, spec.FakeVRAMMB)
+		r.gpu.Attach(inst.pid, spec.SimulatedVRAMMB)
 	}
 	r.mu.Lock()
 	r.instances = append(r.instances, inst)
@@ -188,7 +188,7 @@ type Instance struct {
 	delay     time.Duration
 	stopDelay time.Duration
 	linger    time.Duration
-	gpu       *gpufake.Monitor
+	gpu       *gpusim.Monitor
 	rt        *Runtime
 	srv       *http.Server
 
@@ -218,7 +218,7 @@ func (i *Instance) Err() error {
 func (i *Instance) Health(ctx context.Context) error {
 	select {
 	case <-i.done:
-		return errors.New("fake instance: exited")
+		return errors.New("simulated instance: exited")
 	default:
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+i.addr+"/health", nil)
@@ -231,7 +231,7 @@ func (i *Instance) Health(ctx context.Context) error {
 	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("fake instance: health %d", resp.StatusCode)
+		return fmt.Errorf("simulated instance: health %d", resp.StatusCode)
 	}
 	return nil
 }
@@ -272,7 +272,7 @@ wait:
 		select {
 		case <-tick.C:
 		case <-deadline.C:
-			err = errors.New("fake instance: stop grace exceeded with requests in flight")
+			err = errors.New("simulated instance: stop grace exceeded with requests in flight")
 			break wait
 		case <-ctx.Done():
 			err = ctx.Err()
@@ -289,7 +289,7 @@ func (i *Instance) Kill() {
 	if i.gpu != nil {
 		i.gpu.Detach(i.pid)
 	}
-	i.setErr(errors.New("fake instance: killed"))
+	i.setErr(errors.New("simulated instance: killed"))
 	_ = i.srv.Close()
 }
 
@@ -369,7 +369,7 @@ func (i *Instance) chat(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": "fake-" + fmt.Sprint(i.requests.Load()), "object": "chat.completion",
+			"id": "sim-" + fmt.Sprint(i.requests.Load()), "object": "chat.completion",
 			"model": i.spec.ID,
 			"choices": []any{map[string]any{"index": 0, "finish_reason": "stop",
 				"message": map[string]any{"role": "assistant", "content": "ok from " + i.spec.ID}}},
@@ -390,7 +390,7 @@ func (i *Instance) chat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		chunk, _ := json.Marshal(map[string]any{
-			"id": "fake", "object": "chat.completion.chunk", "model": i.spec.ID,
+			"id": "sim", "object": "chat.completion.chunk", "model": i.spec.ID,
 			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": fmt.Sprintf("tok%d ", n)}}},
 		})
 		fmt.Fprintf(w, "data: %s\n\n", chunk)

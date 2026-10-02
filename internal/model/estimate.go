@@ -26,8 +26,8 @@ type Estimate struct {
 // EstimateVRAM predicts sp's footprint. It reads the GGUF header when
 // possible and falls back to the file-size heuristic otherwise.
 func EstimateVRAM(sp *Spec) Estimate {
-	if sp.RuntimeType == "fake" {
-		return Estimate{TotalMB: sp.FakeVRAMMB, Method: "fake"}
+	if sp.RuntimeType == "simulation" {
+		return Estimate{TotalMB: sp.SimulatedVRAMMB, Method: "simulation"}
 	}
 	est, err := estimateFromGGUF(sp)
 	if err == nil {

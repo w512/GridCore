@@ -29,7 +29,7 @@ vet:
 	go vet $(PKG)
 
 run: build
-	$(BIN) serve --config examples/fake-demo.yaml --state-dir /tmp/gridcore-state
+	$(BIN) serve --config examples/simulation.yaml --state-dir /tmp/gridcore-state
 
 deploy: check-deploy linux
 	rsync -az $(BIN)-linux-amd64 $(HOST):.local/bin/gridcore

@@ -12,28 +12,28 @@ import (
 	"time"
 
 	"github.com/w512/gridcore/internal/config"
-	gpufake "github.com/w512/gridcore/internal/gpu/fake"
+	gpusim "github.com/w512/gridcore/internal/gpu/simulation"
 	"github.com/w512/gridcore/internal/job"
 	"github.com/w512/gridcore/internal/metrics"
 	"github.com/w512/gridcore/internal/model"
 	"github.com/w512/gridcore/internal/runtime"
-	rtfake "github.com/w512/gridcore/internal/runtime/fake"
+	rtsim "github.com/w512/gridcore/internal/runtime/simulation"
 )
 
-// fakeClock lets tests move policy time (hot_ttl, idle window, deadlines)
+// testClock lets tests move policy time (hot_ttl, idle window, deadlines)
 // without sleeping. Wake-ups still come from the real ticker.
-type fakeClock struct {
+type testClock struct {
 	mu sync.Mutex
 	t  time.Time
 }
 
-func (c *fakeClock) Now() time.Time {
+func (c *testClock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.t
 }
 
-func (c *fakeClock) Advance(d time.Duration) {
+func (c *testClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	c.t = c.t.Add(d)
 	c.mu.Unlock()
@@ -43,14 +43,14 @@ var testPortBase atomic.Int64
 
 func init() { testPortBase.Store(43000) }
 
-// harness runs a scheduler against the fake runtime and fake GPU.
+// harness runs a scheduler against the simulation runtime and simulated GPU.
 type harness struct {
 	t      *testing.T
 	cfg    *config.Config
-	gpu    *gpufake.Monitor
-	rt     *rtfake.Runtime
+	gpu    *gpusim.Monitor
+	rt     *rtsim.Runtime
 	s      *Scheduler
-	clock  *fakeClock
+	clock  *testClock
 	cancel context.CancelFunc
 	done   chan struct{}
 	nextID atomic.Int64
@@ -58,9 +58,9 @@ type harness struct {
 
 // modelsYAML builds the models section. Each model: id -> "vram[,parallel[,flags]]".
 const baseYAML = `
-gpu: { device: fake, headroom_mb: 512, poll_interval: 10ms }
+gpu: { device: simulation, headroom_mb: 512, poll_interval: 10ms }
 runtimes:
-  sim: { type: fake, port_range: [%d, %d] }
+  sim: { type: simulation, port_range: [%d, %d] }
 policy:
   classes:
     interactive: { hot_ttl: 200ms }
@@ -87,10 +87,10 @@ func newHarnessWith(t *testing.T, totalMB int, models, extraPolicy string) *harn
 	if err != nil {
 		t.Fatalf("config: %v\n%s", err, src)
 	}
-	gpu := gpufake.New("FakeGPU", totalMB)
-	rt := rtfake.New("sim", gpu)
+	gpu := gpusim.New("Simulated GPU", totalMB)
+	rt := rtsim.New("sim", gpu)
 	rt.RequestDelay = time.Millisecond
-	clock := &fakeClock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}
+	clock := &testClock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}
 
 	store, _ := model.OpenStore("")
 	s, err := New(cfg, map[string]runtime.Runtime{"sim": rt}, gpu, store, metrics.New(), Options{

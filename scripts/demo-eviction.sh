@@ -3,7 +3,7 @@
 # request for a model that does not fit evicts it and loads its own.
 #
 # Needs at least two chat models whose footprints do not fit together in
-# the budget (examples/fake-demo.yaml is set up that way).
+# the budget (examples/simulation.yaml is set up that way).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/demo-lib.sh

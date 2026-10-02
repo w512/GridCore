@@ -2,7 +2,7 @@
 //
 // The config is pure data: it does not touch the filesystem beyond reading
 // the file itself. Path existence is checked separately via CheckFiles so
-// that tests and the fake runtime can run without any model files.
+// that tests and the simulation runtime can run without any model files.
 package config
 
 import (
@@ -23,8 +23,8 @@ import (
 
 // Runtime types known to the process supervisor.
 const (
-	RuntimeLlamaCpp = "llamacpp"
-	RuntimeFake     = "fake"
+	RuntimeLlamaCpp   = "llamacpp"
+	RuntimeSimulation = "simulation"
 )
 
 // Capabilities a model may declare. They gate which endpoints may target it.
@@ -59,7 +59,7 @@ type Server struct {
 }
 
 type GPU struct {
-	// Device selects the monitor: "auto", "nvidia:<idx>" or "fake".
+	// Device selects the monitor: "auto", "nvidia:<idx>" or "simulation".
 	Device string `yaml:"device"`
 	// VRAMLimitMB caps the budget below the physical total. nil = no cap.
 	VRAMLimitMB *int `yaml:"vram_limit_mb"`
@@ -67,19 +67,19 @@ type GPU struct {
 	// compute buffers not attributed to a process.
 	HeadroomMB   int           `yaml:"headroom_mb"`
 	PollInterval time.Duration `yaml:"poll_interval"`
-	// FakeTotalMB is the capacity of the fake device (device: fake).
-	FakeTotalMB int `yaml:"fake_total_mb"`
+	// SimulatedTotalMB is the capacity of the simulated device (device: simulation).
+	SimulatedTotalMB int `yaml:"simulated_total_mb"`
 }
 
 type Runtime struct {
-	// Type selects the adapter (llamacpp | fake). Defaults to the map key.
+	// Type selects the adapter (llamacpp | simulation). Defaults to the map key.
 	Type        string        `yaml:"type"`
 	Binary      string        `yaml:"binary"`
 	PortRange   [2]int        `yaml:"port_range"`
 	LoadTimeout time.Duration `yaml:"load_timeout"`
 	DefaultArgs []string      `yaml:"default_args"`
-	// FakeRequestDelay is how long a fake instance takes per request.
-	FakeRequestDelay time.Duration `yaml:"fake_request_delay"`
+	// SimulatedRequestDelay is how long a simulated instance takes per request.
+	SimulatedRequestDelay time.Duration `yaml:"simulated_request_delay"`
 }
 
 type Model struct {
@@ -99,10 +99,10 @@ type Model struct {
 	// Preload loads the model at start but leaves it evictable.
 	Preload bool `yaml:"preload"`
 
-	// Fake-runtime knobs (ignored by real runtimes). Let tests and demos
+	// Simulation knobs (ignored by real runtimes). Let tests and demos
 	// describe a model's footprint without a file on disk.
-	FakeVRAMMB int           `yaml:"fake_vram_mb"`
-	FakeLoad   time.Duration `yaml:"fake_load_time"`
+	SimulatedVRAMMB int           `yaml:"simulated_vram_mb"`
+	SimulatedLoad   time.Duration `yaml:"simulated_load_time"`
 }
 
 // Family groups variants of one model (sizes or quants of the same weights,
@@ -282,8 +282,8 @@ func (c *Config) applyDefaults() {
 	if c.GPU.PollInterval == 0 {
 		c.GPU.PollInterval = 500 * time.Millisecond
 	}
-	if c.GPU.FakeTotalMB == 0 {
-		c.GPU.FakeTotalMB = 16384
+	if c.GPU.SimulatedTotalMB == 0 {
+		c.GPU.SimulatedTotalMB = 16384
 	}
 
 	if c.Runtimes == nil {
@@ -299,8 +299,8 @@ func (c *Config) applyDefaults() {
 		if rt.LoadTimeout == 0 {
 			rt.LoadTimeout = 120 * time.Second
 		}
-		if rt.Type == RuntimeFake && rt.FakeRequestDelay == 0 {
-			rt.FakeRequestDelay = 50 * time.Millisecond
+		if rt.Type == RuntimeSimulation && rt.SimulatedRequestDelay == 0 {
+			rt.SimulatedRequestDelay = 50 * time.Millisecond
 		}
 		c.Runtimes[name] = rt
 	}
@@ -371,7 +371,7 @@ func (c *Config) Validate() error {
 		add("gpu.vram_limit_mb must be > 0 when set")
 	}
 	if !validDevice(c.GPU.Device) {
-		add("gpu.device %q: want auto, nvidia:<index> or fake", c.GPU.Device)
+		add("gpu.device %q: want auto, nvidia:<index> or simulation", c.GPU.Device)
 	}
 
 	for name, rt := range c.Runtimes {
@@ -380,9 +380,9 @@ func (c *Config) Validate() error {
 			if rt.Binary == "" {
 				add("runtimes.%s.binary is required", name)
 			}
-		case RuntimeFake:
+		case RuntimeSimulation:
 		default:
-			add("runtimes.%s.type %q: want llamacpp or fake", name, rt.Type)
+			add("runtimes.%s.type %q: want llamacpp or simulation", name, rt.Type)
 		}
 		lo, hi := rt.PortRange[0], rt.PortRange[1]
 		if lo < 1024 || hi > 65535 || lo > hi {
@@ -405,11 +405,11 @@ func (c *Config) Validate() error {
 		if !ok {
 			add("models.%s.runtime %q is not defined in runtimes", id, m.Runtime)
 		}
-		if m.Path == "" && rt.Type != RuntimeFake {
+		if m.Path == "" && rt.Type != RuntimeSimulation {
 			add("models.%s.path is required", id)
 		}
-		if ok && rt.Type == RuntimeFake && m.FakeVRAMMB <= 0 {
-			add("models.%s.fake_vram_mb must be > 0 for fake runtimes", id)
+		if ok && rt.Type == RuntimeSimulation && m.SimulatedVRAMMB <= 0 {
+			add("models.%s.simulated_vram_mb must be > 0 for simulation runtimes", id)
 		}
 		if len(m.Capabilities) == 0 {
 			add("models.%s.capabilities must not be empty", id)
@@ -514,12 +514,12 @@ func (c *Config) Validate() error {
 	return errors.Join(errs...)
 }
 
-// CheckFiles verifies that runtime binaries and model files exist. Fake
+// CheckFiles verifies that runtime binaries and model files exist. Simulation
 // runtimes are skipped. Call this from `serve`, not from tests.
 func (c *Config) CheckFiles() error {
 	var errs []error
 	for name, rt := range c.Runtimes {
-		if rt.Type == RuntimeFake {
+		if rt.Type == RuntimeSimulation {
 			continue
 		}
 		if _, err := os.Stat(rt.Binary); err != nil {
@@ -527,7 +527,7 @@ func (c *Config) CheckFiles() error {
 		}
 	}
 	for id, m := range c.Models {
-		if c.Runtimes[m.Runtime].Type == RuntimeFake {
+		if c.Runtimes[m.Runtime].Type == RuntimeSimulation {
 			continue
 		}
 		if _, err := os.Stat(m.Path); err != nil {
@@ -603,7 +603,7 @@ func DefaultStateDir() string {
 }
 
 func validDevice(d string) bool {
-	if d == "auto" || d == "fake" {
+	if d == "auto" || d == "simulation" {
 		return true
 	}
 	if idx, ok := strings.CutPrefix(d, "nvidia:"); ok {
