@@ -76,6 +76,33 @@ closer to an operating-system scheduler: it manages *workload classes*,
   waiting job says which model holds the memory and why, a family request
   says why it got the variant it got.
 
+## How it differs from llama-swap, Ollama and llama.cpp's router mode
+
+All of them start and stop model servers on demand behind one
+OpenAI-compatible endpoint. What GridCore adds is a sense of whose request
+matters more, and of how much memory each model really takes:
+
+- [**llama-swap**](https://github.com/mostlygeek/llama-swap) swaps upstream
+  servers by the `model` in the request. Which models may run together is
+  something you declare (`matrix`), and idle ones are unloaded after a
+  `ttl`. It works with almost any OpenAI-compatible server, not only
+  llama.cpp, and has a playground UI. It neither measures memory nor puts
+  one client's requests ahead of another's.
+- **Ollama** loads models while they fit in memory and unloads idle ones to
+  make room, or after `keep_alive` (5 minutes by default). Requests that
+  wait for a model are served in the order they arrived.
+- **llama.cpp's router mode** runs one process per model, like GridCore,
+  but limits them by count (`--models-max`, 4 by default), not by memory,
+  and evicts the least recently used.
+- **vLLM** can schedule by priority, within one model's batch. GridCore
+  decides between models and processes on one GPU.
+
+In GridCore a request carries a class: interactive work always goes first,
+and background work is cut into steps that yield to it. A model is loaded
+only if its memory fits, estimated from the GGUF header and then measured
+per process, and eviction picks what is cheapest to lose. The price: it
+manages llama.cpp only, and one GPU.
+
 ## Quickstart
 
 Requirements: Linux x86_64, an NVIDIA GPU with a working driver
