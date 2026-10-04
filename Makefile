@@ -7,7 +7,7 @@ LDFLAGS  := -s -w -X main.version=$(VERSION)
 HOST     ?= gpu-box
 REMOTE   ?= ~/gridcore
 
-.PHONY: all build tools linux test vet lint run deploy check-deploy install-service clean
+.PHONY: all build tools linux test vet lint run deploy check-deploy install-service notices clean
 
 all: vet test build
 
@@ -42,6 +42,11 @@ check-deploy:
 install-service: deploy
 	rsync -az deploy/gridcore.service $(HOST):.config/systemd/user/gridcore.service
 	ssh $(HOST) 'systemctl --user daemon-reload && systemctl --user enable gridcore >/dev/null && systemctl --user restart gridcore && sleep 1 && systemctl --user --no-pager status gridcore | head -5'
+
+# Licenses and NOTICE files of the modules compiled into the binary; CI
+# fails when the committed file is out of date.
+notices:
+	scripts/third-party-notices.sh > THIRD_PARTY_NOTICES
 
 clean:
 	rm -rf bin

@@ -21,6 +21,8 @@ jobs:
         run: test -z "$(gofmt -l .)" || { gofmt -l .; echo "run gofmt -w ."; exit 1; }
       - run: go vet ./...
       - run: go test -race -count=1 ./...
+      - name: third-party notices up to date
+        run: scripts/third-party-notices.sh | diff -u THIRD_PARTY_NOTICES - || { echo "run: make notices"; exit 1; }
       - name: build all targets
         run: |
           CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -trimpath -o /dev/null ./cmd/gridcore

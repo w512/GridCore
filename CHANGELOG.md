@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.1 — 2026-10-04
+
+### Changed
+- License: MIT, instead of the Prosperity Public License 3.0.0. GridCore
+  is now free for any use, at work included.
+
+### Added
+- `THIRD_PARTY_NOTICES`: the licenses and NOTICE files of the Go modules
+  compiled into the binary (MIT, BSD, Apache-2.0), shipped with every
+  release; `make notices` regenerates it and CI checks it is current.
+- README: how GridCore differs from llama-swap, Ollama, llama.cpp's router
+  mode and vLLM.
+
 ## 0.3.0 — 2026-10-02
 
 Apple Silicon: GridCore runs real models on a Mac, through llama.cpp's
