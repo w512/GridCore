@@ -513,6 +513,7 @@ func (s *Scheduler) buildState() State {
 		st.GPU.Pressure = s.effectivePressure(now).String()
 		st.GPU.SwapUsedMB = s.snap.SwapUsedMB
 	}
+	st.GPU.Processes = s.gpuProcesses()
 	for _, e := range s.res.All() {
 		rm := ResidentModel{
 			ID:              e.ID,
@@ -552,6 +553,28 @@ func (s *Scheduler) buildState() State {
 	sortJobStates(st.Running)
 	sortStrings(st.Disabled)
 	return st
+}
+
+// gpuProcesses lists the processes of the latest snapshot, largest first
+// (ties by PID), with their names and the model each of ours belongs to.
+func (s *Scheduler) gpuProcesses() []GPUProcess {
+	models := map[int]string{}
+	for _, e := range s.res.All() {
+		if e.Instance != nil {
+			models[e.Instance.PID()] = e.ID
+		}
+	}
+	out := make([]GPUProcess, 0, len(s.snap.Processes))
+	for _, p := range s.snap.Processes {
+		out = append(out, GPUProcess{PID: p.PID, Name: s.procNames[p.PID], UsedMB: p.UsedMB, Model: models[p.PID]})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].UsedMB != out[j].UsedMB {
+			return out[i].UsedMB > out[j].UsedMB
+		}
+		return out[i].PID < out[j].PID
+	})
+	return out
 }
 
 func (s *Scheduler) jobState(js *jobState, now time.Time) JobState {

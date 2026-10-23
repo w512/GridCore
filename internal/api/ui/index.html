@@ -9,14 +9,14 @@
 	--bg: #f6f7f9; --card: #fff; --fg: #1d2430; --dim: #6b7685; --line: #e3e7ec;
 	--interactive: #b04fd0; --background: #1b9aaa; --batch: #3d6fd8;
 	--hot: #b04fd0; --pinned: #3d6fd8; --cold: #8d98a6;
-	--ok: #2e9d63; --warn: #d6911e; --bad: #d64545; --free: #eef1f4; --ext: #b9c1cb;
+	--ok: #2e9d63; --warn: #d6911e; --bad: #d64545; --free: #eef1f4; --ext: #b9c1cb; --ext-other: #d6dce3;
 }
 @media (prefers-color-scheme: dark) {
 	:root {
 		--bg: #12161c; --card: #1a2028; --fg: #e3e8ee; --dim: #8b96a4; --line: #2a323d;
 		--interactive: #c77ee0; --background: #2fb8c9; --batch: #6b93ee;
 		--hot: #c77ee0; --pinned: #6b93ee; --cold: #6e7987;
-		--ok: #45b97c; --warn: #e3a440; --bad: #e86464; --free: #232a34; --ext: #4a5462;
+		--ok: #45b97c; --warn: #e3a440; --bad: #e86464; --free: #232a34; --ext: #4a5462; --ext-other: #3a4452;
 	}
 }
 * { box-sizing: border-box; }
@@ -49,6 +49,7 @@ main.stale { opacity: .55; }
 .membar div { height: 100%; min-width: 2px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 6px; border-right: 1px solid var(--card); }
 .membar .loading { background: repeating-linear-gradient(45deg, var(--warn), var(--warn) 6px, transparent 6px, transparent 12px); color: var(--fg); }
 .membar .external { background: var(--ext); color: var(--fg); }
+.membar .unlisted { background: var(--ext-other); color: var(--dim); }
 .memstats { display: flex; flex-wrap: wrap; gap: 6px 26px; margin-top: 10px; color: var(--dim); }
 .memstats b { color: var(--fg); font-weight: 600; }
 .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; font-size: 12px; color: var(--dim); }
@@ -111,6 +112,7 @@ footer a { color: var(--dim); }
 			<span><i style="background:var(--cold)"></i>cold</span>
 			<span><i style="background:repeating-linear-gradient(45deg,var(--warn),var(--warn) 3px,transparent 3px,transparent 6px)"></i>loading</span>
 			<span><i style="background:var(--ext)"></i>other processes</span>
+			<span><i style="background:var(--ext-other)"></i>other, not listed by the driver</span>
 			<span><i style="background:var(--free);border:1px solid var(--line)"></i>free</span>
 		</div>
 	</section>
@@ -140,6 +142,14 @@ footer a { color: var(--dim); }
 			<tbody id="models"></tbody>
 		</table>
 		<div class="disabled" id="disabled" hidden></div>
+	</section>
+
+	<section class="card">
+		<h2>GPU processes<span class="count" id="procs-count"></span></h2>
+		<table>
+			<thead><tr><th style="text-align:right">PID</th><th>Name</th><th style="text-align:right">Memory</th><th>Model</th></tr></thead>
+			<tbody id="procs"></tbody>
+		</table>
 	</section>
 
 	<div class="row jobs">
@@ -241,8 +251,20 @@ function renderMemory(st) {
 			const wide = pct(r.vram_mb) >= 9;
 			html += `<div class="${loading ? "loading" : ""}" style="width:${pct(r.vram_mb)}%;${style}" title="${esc(label + " GB, " + r.state + ", " + r.tier)}">${wide ? esc(label) : ""}</div>`;
 		}
-		if (g.external_mb > 0) {
-			html += `<div class="external" style="width:${pct(g.external_mb)}%" title="${esc("other processes " + gb(g.external_mb) + " GB")}">${pct(g.external_mb) >= 9 ? "other " + gb(g.external_mb) : ""}</div>`;
+		// External memory: one segment per process the monitor lists, never
+		// more than external_mb in total (the scheduler holds that figure
+		// while an instance starts or stops). What the driver does not list
+		// stays one "other" segment.
+		let rest = g.external_mb || 0;
+		for (const p of (g.processes || []).filter((p) => !p.model)) {
+			const mb = Math.min(p.used_mb, rest);
+			if (mb <= 0) continue;
+			rest -= mb;
+			const label = (p.name || "pid " + p.pid) + " " + gb(mb);
+			html += `<div class="external" style="width:${pct(mb)}%" title="${esc((p.name || "unknown") + ", PID " + p.pid + ", " + gb(p.used_mb) + " GB")}">${pct(mb) >= 9 ? esc(label) : ""}</div>`;
+		}
+		if (rest > 0) {
+			html += `<div class="external unlisted" style="width:${pct(rest)}%" title="${esc("other processes, not listed by the driver, " + gb(rest) + " GB")}">${pct(rest) >= 9 ? "other " + gb(rest) : ""}</div>`;
 		}
 	}
 	bar.innerHTML = html;
@@ -280,6 +302,17 @@ function renderModels(st) {
 	const dis = st.disabled_models || [];
 	$("disabled").hidden = dis.length === 0;
 	$("disabled").textContent = dis.length ? "Disabled after repeated failures: " + dis.join(", ") + " (POST /admin/models/{id}/enable)" : "";
+}
+
+function renderProcesses(st) {
+	const procs = st.gpu.processes || [];
+	$("procs").innerHTML = procs.map((p) => `<tr>
+			<td class="num">${p.pid}</td>
+			<td>${p.name ? `<b>${esc(p.name)}</b>` : `<span class="reason" title="the process is gone, or the OS does not say">unknown</span>`}</td>
+			<td class="num">${gb(p.used_mb)} GB</td>
+			<td>${p.model ? esc(p.model) : `<span class="reason">external</span>`}</td>
+		</tr>`).join("") || `<tr><td colspan="4" class="empty">no processes reported</td></tr>`;
+	$("procs-count").textContent = procs.length;
 }
 
 function modelCell(j) {
@@ -416,6 +449,7 @@ function render(st) {
 	renderHeader(st);
 	renderMemory(st);
 	renderModels(st);
+	renderProcesses(st);
 	renderJobs(st);
 	renderEvents(st);
 	renderCharts();

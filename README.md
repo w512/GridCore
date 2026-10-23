@@ -436,10 +436,12 @@ RESIDENT
   ornith-35b       ready    hot    ▇▇░░░░░░░░░░░░░░░░░░   2.2 GB  slots 0/2  cost 2.1
 ```
 
-The dashboard at `/admin/ui` shows the same in a browser, plus ten minutes
-of memory, queue and utilisation history and every load and eviction since
-the page was opened. It is one page compiled into the binary that polls
-`/admin/state`; it loads nothing from the internet and changes nothing.
+The dashboard at `/admin/ui` shows the same in a browser, plus every
+process on the GPU (name, PID, memory, and the model it serves if it is
+one of GridCore's), ten minutes of memory, queue and utilisation history
+and every load and eviction since the page was opened. It is one page
+compiled into the binary that polls `/admin/state`; it loads nothing from
+the internet and changes nothing.
 
 ![GridCore dashboard: memory budget split by model, memory, queue and GPU utilisation charts, resident models with tier, size, slots and eviction cost, running and queued jobs, and the scheduler's events](docs/gridcore-dashboard.png)
 

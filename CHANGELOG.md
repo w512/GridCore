@@ -13,6 +13,16 @@
   Linux uses `amdgpu:0` when there is no `nvidia-smi`; `gridcore check`
   prints the device's PCI address. Tested on a Radeon Pro W7800 32 GB
   with llama.cpp b11541, ROCm and Vulkan builds.
+- `/admin/state`: `gpu.processes`, every process in the latest GPU
+  snapshot with its PID, executable name, memory and, for GridCore's own
+  instances, the model it serves; largest first, `[]` when there are none.
+  Names come from `/proc/<pid>/comm` on Linux and `ps` on macOS, looked up
+  once per PID rather than on every poll, and off the scheduler loop.
+- Dashboard: a **GPU processes** panel listing them, and the memory bar
+  splits "other processes" into one segment per process, with name, PID
+  and size in its tooltip. Memory the driver does not attribute to any
+  process (on Apple Silicon, all of it outside GridCore's own instances)
+  stays one "other" segment.
 
 ## 0.3.1 — 2026-10-04
 

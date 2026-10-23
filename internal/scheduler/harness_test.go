@@ -54,6 +54,39 @@ type harness struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	nextID atomic.Int64
+	names  *fakeNames
+}
+
+// fakeNames stands in for the OS's process names: the simulated PIDs are
+// not real processes. Instances of the simulation runtime (PIDs from
+// 100001) are llama-server, other PIDs have the name set for them, if any.
+// It counts lookups per PID.
+type fakeNames struct {
+	mu    sync.Mutex
+	names map[int]string
+	calls map[int]int
+}
+
+func (f *fakeNames) set(pid int, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.names[pid] = name
+}
+
+func (f *fakeNames) lookup(pid int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls[pid]++
+	if name, ok := f.names[pid]; ok || pid <= 100000 {
+		return name
+	}
+	return "llama-server"
+}
+
+func (f *fakeNames) lookups(pid int) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[pid]
 }
 
 // modelsYAML builds the models section. Each model: id -> "vram[,parallel[,flags]]".
@@ -92,6 +125,7 @@ func newHarnessWith(t *testing.T, totalMB int, models, extraPolicy string) *harn
 	rt.RequestDelay = time.Millisecond
 	clock := &testClock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}
 
+	names := &fakeNames{names: map[int]string{}, calls: map[int]int{}}
 	store, _ := model.OpenStore("")
 	s, err := New(cfg, map[string]runtime.Runtime{"sim": rt}, gpu, store, metrics.New(), Options{
 		Tick:            5 * time.Millisecond,
@@ -99,12 +133,13 @@ func newHarnessWith(t *testing.T, totalMB int, models, extraPolicy string) *harn
 		Logger:          slog.New(slog.NewTextHandler(testLogWriter{t}, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		BreakerWindow:   time.Minute,
 		ShutdownTimeout: 2 * time.Second,
+		ProcessName:     names.lookup,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	h := &harness{t: t, cfg: cfg, gpu: gpu, rt: rt, s: s, clock: clock, cancel: cancel, done: make(chan struct{})}
+	h := &harness{t: t, cfg: cfg, gpu: gpu, rt: rt, s: s, clock: clock, cancel: cancel, done: make(chan struct{}), names: names}
 	go func() {
 		_ = s.Run(ctx)
 		close(h.done)

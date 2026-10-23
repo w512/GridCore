@@ -20,6 +20,7 @@ import (
 	"github.com/w512/gridcore/internal/job"
 	"github.com/w512/gridcore/internal/metrics"
 	"github.com/w512/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/procname"
 	"github.com/w512/gridcore/internal/residency"
 	"github.com/w512/gridcore/internal/runtime"
 )
@@ -32,6 +33,9 @@ type Options struct {
 	BreakerWindow    time.Duration // default 5m
 	ShutdownTimeout  time.Duration // wait for in-flight steps on shutdown; default 30s
 	Logger           *slog.Logger
+	// ProcessName returns the executable name of a PID on the GPU;
+	// default procname.Name.
+	ProcessName func(pid int) string
 }
 
 func (o *Options) defaults() {
@@ -90,6 +94,10 @@ type Scheduler struct {
 	// poll and would trigger a spurious eviction.
 	externalSettle int
 	gpuName        string
+	// names resolves the PIDs of each snapshot outside the loop (ps on
+	// macOS spawns a process); procNames holds the latest result.
+	names     *procname.Cache
+	procNames map[int]string
 
 	// Unified memory: the damped host memory pressure, a recent device
 	// out-of-memory report and the OOM counts already seen per instance
@@ -171,6 +179,7 @@ func New(cfg *config.Config, runtimes map[string]runtime.Runtime, mon gpu.Monito
 		loads:     map[string][]time.Time{},
 		thrashAt:  map[string]time.Time{},
 		ooms:      map[runtime.Instance]int{},
+		names:     procname.NewCache(opts.ProcessName),
 	}
 	weights := map[job.Class]float64{}
 	for c, p := range cfg.Policy.Classes {
@@ -436,7 +445,7 @@ func (s *Scheduler) snapshotSync(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.onSnapshot(evSnapshot{snap: snap})
+	s.onSnapshot(evSnapshot{snap: snap, names: s.processNames(snap)})
 	return nil
 }
 
@@ -458,8 +467,22 @@ func (s *Scheduler) pollGPU() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		snap, err := s.gpu.Snapshot(ctx)
-		s.send(evSnapshot{snap: snap, err: err})
+		var names map[int]string
+		if err == nil {
+			names = s.processNames(snap)
+		}
+		s.send(evSnapshot{snap: snap, names: names, err: err})
 	}()
+}
+
+// processNames names the processes of snap. It runs on the polling
+// goroutine; the cache asks the OS only about PIDs new since the last poll.
+func (s *Scheduler) processNames(snap gpu.Snapshot) map[int]string {
+	pids := make([]int, len(snap.Processes))
+	for i, p := range snap.Processes {
+		pids[i] = p.PID
+	}
+	return s.names.Names(pids)
 }
 
 // preload loads pinned models first, then preload-only ones.

@@ -40,8 +40,9 @@ type evStopped struct {
 	reason string
 }
 type evSnapshot struct {
-	snap gpu.Snapshot
-	err  error
+	snap  gpu.Snapshot
+	names map[int]string // pid -> executable name, for snap.Processes
+	err   error
 }
 type evStateReq struct{ reply chan State }
 type evAdmin struct {
@@ -402,6 +403,7 @@ func (s *Scheduler) onSnapshot(e evSnapshot) {
 		s.snapFailures = 0
 	}
 	s.snap = e.snap
+	s.procNames = e.names
 	s.snapOK = true
 	if s.gpuName == "" {
 		s.gpuName = e.snap.Name

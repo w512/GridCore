@@ -1,6 +1,9 @@
 package scheduler
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // State is the JSON document served at /admin/state and rendered by
 // `gridcore status`. It is a snapshot built inside the scheduler loop, so it
@@ -33,6 +36,28 @@ type GPUState struct {
 	MemoryKind string `json:"memory_kind,omitempty"`
 	Pressure   string `json:"pressure,omitempty"`
 	SwapUsedMB int    `json:"swap_used_mb,omitempty"`
+	// Processes is every process in the latest snapshot, largest first.
+	// Always an array in JSON, [] rather than null when there are none.
+	Processes []GPUProcess `json:"processes"`
+}
+
+// MarshalJSON writes a nil Processes as [], also in the states built
+// without a snapshot (scheduler stopped, no scheduler).
+func (g GPUState) MarshalJSON() ([]byte, error) {
+	type plain GPUState
+	if g.Processes == nil {
+		g.Processes = []GPUProcess{}
+	}
+	return json.Marshal(plain(g))
+}
+
+// GPUProcess is one process using the device. Model is the resident model
+// whose instance has the PID, empty for processes GridCore does not manage.
+type GPUProcess struct {
+	PID    int    `json:"pid"`
+	Name   string `json:"name"` // executable base name; "" if it can't be determined
+	UsedMB int    `json:"used_mb"`
+	Model  string `json:"model,omitempty"`
 }
 
 // ResidentModel is one loaded (or loading) model.

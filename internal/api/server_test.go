@@ -203,6 +203,9 @@ func TestDashboard(t *testing.T) {
 	if !strings.Contains(page, `fetch("/admin/state"`) || !strings.Contains(page, "<title>GridCore</title>") {
 		t.Error("the page should poll /admin/state")
 	}
+	if !strings.Contains(page, "GPU processes") || !strings.Contains(page, "gpu.processes") {
+		t.Error("the page should list gpu.processes")
+	}
 	for _, ext := range []string{`src="http`, `href="http`, `url(http`, `@import`} {
 		if strings.Contains(page, ext) {
 			t.Errorf("the page must be self-contained, found %q", ext)
@@ -459,8 +462,12 @@ func TestAdminEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := readJSON(t, r2)
-	if _, ok := st["gpu"]; !ok {
-		t.Errorf("state = %v", st)
+	g, ok := st["gpu"].(map[string]any)
+	if !ok {
+		t.Fatalf("state = %v", st)
+	}
+	if _, ok := g["processes"].([]any); !ok {
+		t.Errorf("gpu.processes should be an array, got %#v", g["processes"])
 	}
 }
 
