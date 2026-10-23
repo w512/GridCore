@@ -26,6 +26,7 @@ import (
 
 	"github.com/w512/gridcore/internal/api"
 	"github.com/w512/gridcore/internal/config"
+	"github.com/w512/gridcore/internal/gpu/amdgpu"
 	"github.com/w512/gridcore/internal/gpu/apple"
 	"github.com/w512/gridcore/internal/metrics"
 	"github.com/w512/gridcore/internal/model"
@@ -210,6 +211,9 @@ func cmdCheck(args []string) error {
 	fmt.Printf("gpu:    ok (%s, %d MB %s memory, %d MB in use)\n", snap.Name, snap.TotalMB, snap.MemoryKind, snap.UsedMB)
 	if m, ok := mon.(*apple.Monitor); ok {
 		fmt.Printf("        Metal working-set limit from %s; memory pressure %s, swap %d MB used\n", m.Source, snap.Pressure, snap.SwapUsedMB)
+	}
+	if m, ok := mon.(*amdgpu.Monitor); ok {
+		fmt.Printf("        amdgpu:%d is the device at PCI %s\n", m.Index, m.PCIAddr)
 	}
 	return nil
 }

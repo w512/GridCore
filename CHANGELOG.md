@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `gpu.device: amdgpu:N`: AMD GPUs driven by the amdgpu kernel driver, for
+  llama.cpp built with ROCm (HIP) or Vulkan. `amdgpu:N` is the N-th amdgpu
+  device in PCI address order, as `rocm-smi` lists them. VRAM total and
+  used and the utilisation come from sysfs, per-process VRAM from the DRM
+  client usage stats in `/proc/<pid>/fdinfo` (`drm-total-vram`, or
+  `drm-memory-vram` on older kernels), counted once per DRM client and only
+  for this device's PCI address. Nothing to install, no cgo. `auto` on
+  Linux uses `amdgpu:0` when there is no `nvidia-smi`; `gridcore check`
+  prints the device's PCI address. Tested on a Radeon Pro W7800 32 GB
+  with llama.cpp b11541, ROCm and Vulkan builds.
+
 ## 0.3.1 — 2026-10-04
 
 ### Changed

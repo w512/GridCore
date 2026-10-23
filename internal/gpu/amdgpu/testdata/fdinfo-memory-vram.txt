@@ -1,0 +1,19 @@
+pos:	0
+flags:	02100002
+mnt_id:	26
+ino:	1063
+drm-driver:	amdgpu
+drm-client-id:	14
+drm-pdev:	0000:03:00.0
+pasid:	32771
+drm-memory-vram:	2097152 KiB
+drm-memory-gtt: 	4120 KiB
+drm-memory-cpu: 	0 KiB
+amd-memory-visible-vram:	262144 KiB
+amd-evicted-vram:	0 KiB
+amd-evicted-visible-vram:	0 KiB
+amd-requested-vram:	2097152 KiB
+amd-requested-visible-vram:	262144 KiB
+amd-requested-gtt:	4120 KiB
+drm-engine-gfx:	2061430 ns
+drm-engine-compute:	918247121 ns

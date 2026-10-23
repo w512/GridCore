@@ -60,7 +60,8 @@ type Server struct {
 }
 
 type GPU struct {
-	// Device selects the monitor: "auto", "nvidia:<idx>", "apple" (Apple
+	// Device selects the monitor: "auto", "nvidia:<idx>", "amdgpu:<idx>"
+	// (the idx-th amdgpu device in PCI address order), "apple" (Apple
 	// Silicon unified memory) or "simulation".
 	Device string `yaml:"device"`
 	// VRAMLimitMB caps the budget below the physical total. nil = no cap.
@@ -373,7 +374,7 @@ func (c *Config) Validate() error {
 		add("gpu.vram_limit_mb must be > 0 when set")
 	}
 	if !validDevice(c.GPU.Device) {
-		add("gpu.device %q: want auto, nvidia:<index>, apple or simulation", c.GPU.Device)
+		add("gpu.device %q: want auto, nvidia:<index>, amdgpu:<index>, apple or simulation", c.GPU.Device)
 	}
 
 	for name, rt := range c.Runtimes {
@@ -627,7 +628,11 @@ func validDevice(d string) bool {
 	if d == "auto" || d == "simulation" || d == "apple" {
 		return true
 	}
-	if idx, ok := strings.CutPrefix(d, "nvidia:"); ok {
+	for _, prefix := range []string{"nvidia:", "amdgpu:"} {
+		idx, ok := strings.CutPrefix(d, prefix)
+		if !ok {
+			continue
+		}
 		if idx == "" {
 			return false
 		}

@@ -153,8 +153,28 @@ func TestAppleDeviceHeadroom(t *testing.T) {
 	if err != nil || c.GPU.HeadroomMB != 2048 {
 		t.Errorf("explicit headroom must win: %v %v", c.GPU.HeadroomMB, err)
 	}
-	if DefaultHeadroomMB("nvidia:0") != 512 || DefaultHeadroomMB("simulation") != 512 {
+	if DefaultHeadroomMB("nvidia:0") != 512 || DefaultHeadroomMB("amdgpu:0") != 512 || DefaultHeadroomMB("simulation") != 512 {
 		t.Error("dedicated devices keep 512")
+	}
+}
+
+func TestValidDevice(t *testing.T) {
+	for d, want := range map[string]bool{
+		"auto": true, "apple": true, "simulation": true,
+		"nvidia:0": true, "nvidia:12": true, "amdgpu:0": true, "amdgpu:3": true,
+		"nvidia:": false, "amdgpu:": false, "amdgpu:-1": false, "amdgpu:x": false,
+		"amdgpu": false, "amd:0": false, "card1": false, "rocm:0": false,
+	} {
+		if got := validDevice(d); got != want {
+			t.Errorf("validDevice(%q) = %v, want %v", d, got, want)
+		}
+	}
+	c, err := Parse([]byte(minimal + "gpu:\n  device: amdgpu:1\n"))
+	if err != nil || c.GPU.Device != "amdgpu:1" || c.GPU.HeadroomMB != 512 || c.GPU.Unified() {
+		t.Errorf("amdgpu:1: %+v %v", c.GPU, err)
+	}
+	if _, err := Parse([]byte(minimal + "gpu:\n  device: amdgpu:x\n")); err == nil || !strings.Contains(err.Error(), "amdgpu:<index>") {
+		t.Errorf("bad amdgpu index: %v, want an error naming amdgpu:<index>", err)
 	}
 }
 

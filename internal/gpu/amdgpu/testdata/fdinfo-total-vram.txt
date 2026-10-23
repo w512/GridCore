@@ -1,0 +1,30 @@
+pos:	0
+flags:	02100002
+mnt_id:	26
+ino:	1063
+drm-driver:	amdgpu
+drm-client-id:	27
+drm-pdev:	0000:03:00.0
+pasid:	32774
+drm-total-cpu:	0
+drm-shared-cpu:	0
+drm-active-cpu:	0
+drm-resident-cpu:	0
+drm-purgeable-cpu:	0
+drm-total-gtt:	2 MiB
+drm-shared-gtt:	0
+drm-active-gtt:	0
+drm-resident-gtt:	2 MiB
+drm-purgeable-gtt:	0
+drm-total-vram:	9216 MiB
+drm-shared-vram:	0
+drm-active-vram:	0
+drm-resident-vram:	9216 MiB
+drm-purgeable-vram:	0
+drm-memory-vram:	9437184 KiB
+drm-memory-gtt: 	2048 KiB
+drm-memory-cpu: 	0 KiB
+amd-evicted-vram:	0 KiB
+amd-requested-vram:	9437184 KiB
+amd-requested-gtt:	2048 KiB
+drm-engine-compute:	91824712 ns

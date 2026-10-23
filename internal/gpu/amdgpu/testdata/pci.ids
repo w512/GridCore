@@ -1,0 +1,11 @@
+# pci.ids excerpt
+1000  Broadcom / LSI
+	0001  53c810
+1002  Advanced Micro Devices, Inc. [AMD/ATI]
+	164e  Raphael
+		1002 164e  Raphael
+	7448  Navi 31 [Radeon Pro W7800]
+	744c  Navi 31 [Radeon RX 7900 XT/7900 XTX/7900 GRE/7900M]
+		1da2 e471  NITRO+ RX 7900 XTX Vapor-X
+1003  ULSI Systems
+	7448  Not an AMD device

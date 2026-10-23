@@ -2,9 +2,9 @@
 //
 // The scheduler polls Monitor.Snapshot at gpu.poll_interval and attributes
 // per-process usage to model instances by PID. Implementations: nvidia
-// (nvidia-smi), apple (Apple Silicon unified memory: ioreg, footprint,
-// sysctl), simulation (in-memory, driven by the simulation runtime), and
-// later amdgpu (sysfs).
+// (nvidia-smi), amdgpu (sysfs and DRM fdinfo), apple (Apple Silicon unified
+// memory: ioreg, footprint, sysctl) and simulation (in-memory, driven by
+// the simulation runtime).
 package gpu
 
 import (

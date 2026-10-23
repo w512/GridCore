@@ -13,6 +13,7 @@ import (
 
 	"github.com/w512/gridcore/internal/config"
 	"github.com/w512/gridcore/internal/gpu"
+	"github.com/w512/gridcore/internal/gpu/amdgpu"
 	"github.com/w512/gridcore/internal/gpu/apple"
 	"github.com/w512/gridcore/internal/gpu/nvidia"
 	gpusim "github.com/w512/gridcore/internal/gpu/simulation"
@@ -34,8 +35,10 @@ func buildBackends(cfg *config.Config, stateDir string) (gpu.Monitor, map[string
 			device = "apple"
 		} else if _, err := exec.LookPath("nvidia-smi"); err == nil {
 			device = "nvidia:0"
+		} else if addrs, _ := amdgpu.Devices(""); len(addrs) > 0 {
+			device = "amdgpu:0"
 		} else {
-			return nil, nil, fmt.Errorf("gpu.device auto: no supported GPU tooling found (nvidia-smi); set gpu.device explicitly (nvidia:N or simulation)")
+			return nil, nil, fmt.Errorf("gpu.device auto: no supported GPU found (nvidia-smi, amdgpu driver); set gpu.device explicitly (nvidia:N, amdgpu:N or simulation)")
 		}
 	}
 	switch {
@@ -54,6 +57,16 @@ func buildBackends(cfg *config.Config, stateDir string) (gpu.Monitor, map[string
 			return nil, nil, fmt.Errorf("gpu.device %q: bad index", device)
 		}
 		mon = nvidia.New(idx)
+	case strings.HasPrefix(device, "amdgpu:"):
+		idx, err := strconv.Atoi(strings.TrimPrefix(device, "amdgpu:"))
+		if err != nil {
+			return nil, nil, fmt.Errorf("gpu.device %q: bad index", device)
+		}
+		m, err := amdgpu.New(amdgpu.Options{Index: idx})
+		if err != nil {
+			return nil, nil, fmt.Errorf("gpu.device %s: %w", device, err)
+		}
+		mon = m
 	default:
 		return nil, nil, fmt.Errorf("gpu.device %q is not supported", device)
 	}

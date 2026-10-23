@@ -107,7 +107,8 @@ manages llama.cpp only, and one GPU.
 
 Requirements: Linux x86_64, an NVIDIA GPU with a working driver
 (`nvidia-smi` prints your card), and some GGUF models. On an Apple Silicon
-Mac, see [below](#on-an-apple-silicon-mac).
+Mac, see [below](#on-an-apple-silicon-mac); with an AMD GPU,
+[here](#on-an-amd-gpu-linux).
 
 ```bash
 # 1. GridCore binary
@@ -195,6 +196,34 @@ below (3 minutes) loaded each model once and failed no request; chat p50
 was 6.6 s, p95 7.9 s. The 12B, the E2B and the embedder stay resident
 together; the E4B does not fit next to them, so background work that needs
 it waits.
+
+### On an AMD GPU (Linux)
+
+GridCore also schedules on an AMD card driven by the `amdgpu` kernel
+driver, with llama.cpp built for ROCm (HIP) or Vulkan. There is no
+prebuilt llama.cpp for these in `scripts/install-llamacpp.sh`: build it
+([HIP](https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md#hip),
+[Vulkan](https://github.com/ggml-org/llama.cpp/blob/master/docs/build.md#vulkan))
+and point `runtimes.llamacpp.binary` at its `llama-server`. Then:
+
+```yaml
+gpu:
+  device: amdgpu:0          # auto picks it too when there is no nvidia-smi
+```
+
+`amdgpu:N` is the N-th device bound to the amdgpu driver in PCI address
+order, as `rocm-smi` lists them; it is not the N of `/dev/dri/cardN`.
+`gridcore check` prints the PCI address it picked. A Ryzen's integrated
+Radeon is an amdgpu device too and is counted, so look before you trust
+`:0`. If llama.cpp sees both GPUs, pin it to the card GridCore manages with
+`--device` in `default_args` (names from `llama-server --list-devices`, e.g.
+`ROCm0` or `Vulkan0`).
+
+Everything is read from the kernel, no `rocm-smi` needed: VRAM total and
+used and the utilisation from sysfs, a model's VRAM from its process's DRM
+usage stats in `/proc/<pid>/fdinfo` (Linux 5.19 or newer). GridCore can
+always read those of the models it starts; other users' processes are
+skipped, and their VRAM counts as used by someone else.
 
 ### No GPU at all: a simulated card
 
@@ -286,7 +315,7 @@ models are not comparable.
 server: { listen: 127.0.0.1:8080 }
 
 gpu:
-  device: nvidia:0          # or apple (Apple Silicon), or simulation
+  device: nvidia:0          # or amdgpu:0 (AMD), apple (Apple Silicon), simulation
   headroom_mb: 512          # budget = min(total, vram_limit_mb) - headroom
   vram_limit_mb: null       # cap GridCore below the card, e.g. to leave room for other apps
 
@@ -457,16 +486,19 @@ the file).
 
 ## Status and scope
 
-v0.3: one GPU, NVIDIA (CUDA) or Apple Silicon (Metal, unified memory),
-llama.cpp as the runtime, three classes, residency with cost-based
-eviction, model families, admission as described above, a dashboard.
-Tested on Ubuntu 24.04 with an RTX 4060 Ti 16 GB and llama.cpp b11060, and
-on macOS 15.8 with an M4 Pro 24 GB and llama.cpp b11146. See
+v0.3: one GPU, NVIDIA (CUDA), AMD (ROCm or Vulkan) or Apple Silicon
+(Metal, unified memory), llama.cpp as the runtime, three classes, residency
+with cost-based eviction, model families, admission as described above, a
+dashboard. Tested on Ubuntu 24.04 with an RTX 4060 Ti 16 GB and llama.cpp
+b11060, on macOS 15.8 with an M4 Pro 24 GB and llama.cpp b11146, and on
+Ubuntu 24.04 with a Radeon Pro W7800 32 GB and llama.cpp b11541 (ROCm and
+Vulkan builds). See
 [`CHANGELOG.md`](CHANGELOG.md) for what changed in each version.
 
 Deliberately not yet: cloud fallback, preempting a chat mid-generation,
-vLLM/MLX runtimes, AMD GPUs (APUs with unified memory included), multiple
-GPUs, authentication. The architecture has room for all of them.
+vLLM/MLX runtimes, AMD APUs as unified memory (an integrated Radeon is
+treated as a card with its small dedicated VRAM), multiple GPUs,
+authentication. The architecture has room for all of them.
 
 ## Building
 
