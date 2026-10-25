@@ -443,7 +443,7 @@ and every load and eviction since the page was opened. It is one page
 compiled into the binary that polls `/admin/state`; it loads nothing from
 the internet and changes nothing.
 
-![GridCore dashboard: memory budget split by model, memory, queue and GPU utilisation charts, resident models with tier, size, slots and eviction cost, running and queued jobs, and the scheduler's events](docs/gridcore-dashboard.png)
+![GridCore dashboard: memory budget split by model, memory, queue and GPU utilisation charts, resident models with tier, size, slots and eviction cost, every process on the GPU with the model it serves, running and queued jobs, and the scheduler's events](docs/gridcore-dashboard.png)
 
 Under load on that card:
 
