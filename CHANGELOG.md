@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-10-25
+
+AMD GPUs: GridCore schedules on a card driven by the amdgpu kernel driver,
+with llama.cpp built for ROCm or Vulkan, reading everything from the
+kernel. Tested on a Radeon Pro W7800 32 GB. And every process on the GPU,
+GridCore's own and others', in `/admin/state` and the dashboard.
 
 ### Added
 - `gpu.device: amdgpu:N`: AMD GPUs driven by the amdgpu kernel driver, for

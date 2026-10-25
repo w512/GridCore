@@ -488,7 +488,7 @@ the file).
 
 ## Status and scope
 
-v0.3: one GPU, NVIDIA (CUDA), AMD (ROCm or Vulkan) or Apple Silicon
+v0.4: one GPU, NVIDIA (CUDA), AMD (ROCm or Vulkan) or Apple Silicon
 (Metal, unified memory), llama.cpp as the runtime, three classes, residency
 with cost-based eviction, model families, admission as described above, a
 dashboard. Tested on Ubuntu 24.04 with an RTX 4060 Ti 16 GB and llama.cpp
