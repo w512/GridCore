@@ -291,7 +291,7 @@ func (s *Scheduler) Submit(j *job.Job) (*Handle, error) {
 		j.Enqueued = s.opts.Now()
 	}
 	h := newHandle(s, j)
-	js := &jobState{job: j, handle: h, steps: map[int]string{}, stepStart: map[int]time.Time{}}
+	js := &jobState{job: j, handle: h, steps: map[int]*residency.Entry{}, stepStart: map[int]time.Time{}}
 	if !s.send(evSubmit{js: js}) {
 		return nil, ErrShuttingDown
 	}

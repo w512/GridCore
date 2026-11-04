@@ -372,7 +372,7 @@ func (s *Scheduler) dispatch(js *jobState, ent *residency.Entry, now time.Time) 
 	step := js.dispatched
 	js.dispatched++
 	js.inflight++
-	js.steps[step] = ent.ID
+	js.steps[step] = ent
 	js.stepStart[step] = now
 	ent.Running++
 	s.res.Touch(ent.ID, js.job.Class, now)

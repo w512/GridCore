@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/w512/gridcore/internal/job"
+	"github.com/w512/gridcore/internal/residency"
 )
 
 // Grant tells the API layer that one step of a job may run now on the given
@@ -123,9 +124,10 @@ type jobState struct {
 	lastProgress time.Time
 	reason       string // why it is waiting (for /admin/state)
 
-	// instances that hold steps of this job, for slot return on completion
-	steps     map[int]string    // step -> resident entry id
-	stepStart map[int]time.Time // step -> dispatch time
+	// Keep the exact entry that received each step: a model id may name a
+	// replacement instance by the time a crashed instance's step reports back.
+	steps     map[int]*residency.Entry // step -> resident entry at dispatch
+	stepStart map[int]time.Time        // step -> dispatch time
 }
 
 func (js *jobState) remaining() int { return js.job.Steps - js.dispatched }

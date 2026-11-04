@@ -341,6 +341,80 @@ func TestInstanceCrash(t *testing.T) {
 	}
 }
 
+func TestLateStepDoneAfterInstanceReload(t *testing.T) {
+	for _, draining := range []bool{false, true} {
+		name := "ready"
+		if draining {
+			name = "draining"
+		}
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, 16000, chat)
+			old := h.submit(job.Interactive, "chat", 1)
+			oldGrant := h.grant(old, wait)
+			h.rt.Instance("chat").Kill()
+			if err := h.finish(old, wait); !errors.Is(err, ErrInstanceFailed) {
+				t.Fatalf("crashed job: %v", err)
+			}
+
+			fresh := h.submit(job.Interactive, "chat", 1)
+			freshGrant := h.grant(fresh, wait)
+			// Return the active slot even if an assertion below fails.
+			defer fresh.StepDone(freshGrant.Step, nil, Usage{})
+			replacement := h.rt.Instance("chat")
+			if draining {
+				if err := h.s.UnloadModel("chat"); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// The failed instance's request reports back only after the new
+			// instance is serving another request, possibly while draining.
+			old.StepDone(oldGrant.Step, errors.New("old connection closed"), Usage{})
+			r := h.resident("chat") // also waits for StepDone to be processed
+			if r == nil || r.State != name || r.BusySlots != 1 || r.PID != replacement.PID() {
+				t.Errorf("late StepDone changed replacement's active slot: %+v", r)
+			}
+			if err := h.finish(old, wait); !errors.Is(err, ErrInstanceFailed) {
+				t.Errorf("late StepDone changed crashed job's outcome: %v", err)
+			}
+
+			var queued *Handle
+			if draining {
+				// A draining replacement must stay alive until its own step
+				// completes, rather than being stopped by the old StepDone.
+				select {
+				case <-replacement.Done():
+					t.Error("replacement stopped with its request still active")
+				default:
+				}
+			} else {
+				queued = h.submit(job.Interactive, "chat", 1)
+				select {
+				case g := <-queued.Grants():
+					t.Error("parallel=1 exceeded while replacement's request is active")
+					queued.StepDone(g.Step, nil, Usage{})
+					queued = nil
+				case <-time.After(30 * time.Millisecond):
+				}
+			}
+
+			fresh.StepDone(freshGrant.Step, nil, Usage{})
+			if err := h.finish(fresh, wait); err != nil {
+				t.Fatalf("replacement job: %v", err)
+			}
+			if queued != nil {
+				if err := h.runToCompletion(queued, wait); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if draining {
+				h.eventually(notResident("chat"), "replacement unloaded after its own step completed")
+			}
+			h.eventually(func(st State) bool { return len(st.Running) == 0 }, "all steps accounted for")
+		})
+	}
+}
+
 func TestCircuitBreaker(t *testing.T) {
 	h := newHarness(t, 16000, chat)
 	h.rt.SetFailLoad(errors.New("boom"))

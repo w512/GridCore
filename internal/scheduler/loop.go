@@ -105,7 +105,7 @@ func (s *Scheduler) onStepDone(e evStepDone) {
 		return // job already gone (e.g. crash cleanup); nothing to account
 	}
 	now := s.now()
-	entryID, had := js.steps[e.step]
+	stepEntry, had := js.steps[e.step]
 	if !had {
 		return // duplicate or unknown step
 	}
@@ -122,7 +122,9 @@ func (s *Scheduler) onStepDone(e evStepDone) {
 			s.nextLowerAt = now.Add(time.Duration(float64(d) * (1/f - 1)))
 		}
 	}
-	if ent, ok := s.res.Get(entryID); ok && ent.State != residency.Loading {
+	// A late completion still accounts for its job, but must not return a
+	// slot (or finish draining) on a replacement instance of the same model.
+	if ent, ok := s.res.Get(stepEntry.ID); ok && ent == stepEntry && ent.State != residency.Loading {
 		if ent.Running > 0 {
 			ent.Running--
 		}
@@ -335,8 +337,8 @@ func (s *Scheduler) onDied(e evDied) {
 	// Steps in flight on this instance will fail on their own; make the
 	// outcome explicit so the API layer can stop waiting for other steps.
 	for _, js := range s.jobs {
-		for _, entryID := range js.steps {
-			if entryID == e.id && !js.failed {
+		for _, stepEntry := range js.steps {
+			if stepEntry == ent && !js.failed {
 				s.fail(js, fmt.Errorf("%w: %s", ErrInstanceFailed, detail), "instance_failed")
 				break
 			}
