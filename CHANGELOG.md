@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Tokenized embeddings input (`input: [token, ...]`) is forwarded intact as
+  one request. Only batches of strings or token arrays are chunked; the
+  simulation runtime also returns one embedding for a flat token array.
 - Memory profile keys preserve the order of runtime `default_args` and model
   `args`, including flag/value associations and repeated flag precedence.
   Changing either invalidates measurements in the scheduler, `bench` and

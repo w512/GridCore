@@ -422,11 +422,16 @@ func (i *Instance) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	// input may be a string or an array of strings.
+	// A flat token array is one text, while strings and nested token arrays
+	// can form batches. Match the real runtime's number of embeddings.
 	n := 1
 	var arr []json.RawMessage
 	if json.Unmarshal(req.Input, &arr) == nil {
 		n = len(arr)
+		var tokens []int64
+		if n > 0 && json.Unmarshal(req.Input, &tokens) == nil {
+			n = 1 // one embedding for the entire tokenized text
+		}
 	}
 
 	select {

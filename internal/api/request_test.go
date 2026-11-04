@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -175,6 +176,42 @@ func TestParseEmbeddingsChunking(t *testing.T) {
 	req, _ = parse(t, cfg, job.Embedding, `{"model":"embed","input":"hello"}`, nil)
 	if req.steps != 1 || req.input != nil {
 		t.Errorf("string input should be one step, got %+v", req)
+	}
+}
+
+func TestParseEmbeddingsInputForms(t *testing.T) {
+	for _, chunkSize := range []int{1, 4} {
+		for _, tc := range []struct {
+			name, input string
+			batchItems  int
+		}{
+			{"single string", `"hello"`, 0},
+			{"single token", `[101]`, 0},
+			{"single tokenized text", `[101,102,103,104,105,106,107,108,109]`, 0},
+			{"token array with whitespace", `[ 101, 102, 103, 104, 105 ]`, 0},
+			{"string batch", `["a","b","c","d","e"]`, 5},
+			{"tokenized batch", `[[101,102,103,104,105],[201],[301],[401],[501]]`, 5},
+			{"one tokenized batch item", `[[101,102,103,104,105]]`, 1},
+			{"mixed strings and tokens", `["a","b",101,102,103]`, 0},
+			{"mixed arrays and strings", `[[101],[201],"a","b","c"]`, 0},
+			{"numeric non-integer input", `[1.5,2.5,3.5,4.5,5.5]`, 0},
+		} {
+			t.Run(tc.name+"/chunk="+strconv.Itoa(chunkSize), func(t *testing.T) {
+				cfg := parseCfg(t)
+				cfg.Policy.EmbeddingChunkSize = chunkSize
+				req, aerr := parse(t, cfg, job.Embedding, `{"model":"embed","input":`+tc.input+`}`, nil)
+				if aerr != nil {
+					t.Fatal(aerr)
+				}
+				steps := max(1, (tc.batchItems+chunkSize-1)/chunkSize)
+				if req.steps != steps || len(req.input) != tc.batchItems {
+					t.Errorf("steps=%d batch items=%d, want steps=%d batch items=%d", req.steps, len(req.input), steps, tc.batchItems)
+				}
+				if string(req.body["input"]) != tc.input {
+					t.Errorf("input changed: %s", req.body["input"])
+				}
+			})
+		}
 	}
 }
 

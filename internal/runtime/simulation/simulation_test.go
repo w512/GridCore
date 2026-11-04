@@ -127,6 +127,43 @@ func TestConcurrencyTracking(t *testing.T) {
 	}
 }
 
+func TestEmbeddingsInputForms(t *testing.T) {
+	rt := New("sim", nil)
+	rt.RequestDelay = time.Millisecond
+	inst, err := rt.Load(context.Background(), &model.Spec{ID: "m"}, freePort(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inst.Stop(context.Background())
+	for _, tc := range []struct {
+		input string
+		want  int
+	}{
+		{`"hello"`, 1},
+		{`[101]`, 1},
+		{`[101,102,103,104,105,106,107,108,109]`, 1},
+		{`["a","b","c"]`, 3},
+		{`[[101,102,103,104,105],[201],[301]]`, 3},
+	} {
+		resp, err := http.Post("http://"+inst.Addr()+"/v1/embeddings", "application/json",
+			bytes.NewBufferString(`{"model":"m","input":`+tc.input+`}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out struct {
+			Data []struct{ Index int } `json:"data"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&out)
+		resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(out.Data) != tc.want {
+			t.Errorf("input %s: got %d embeddings, want %d", tc.input, len(out.Data), tc.want)
+		}
+	}
+}
+
 func TestLoadCancelled(t *testing.T) {
 	rt := New("sim", nil)
 	spec := &model.Spec{ID: "m", RuntimeType: "simulation", SimulatedLoad: time.Second}

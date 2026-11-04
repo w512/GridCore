@@ -42,6 +42,7 @@ models:
 `
 
 type live struct {
+	api   *Server
 	ts    *httptest.Server
 	rt    *rtsim.Runtime
 	sched *scheduler.Scheduler
@@ -84,7 +85,7 @@ func newLiveWith(t *testing.T, extra string) *live {
 		cancel()
 		<-done
 	})
-	return &live{ts: ts, rt: rt, sched: sched, cfg: cfg}
+	return &live{api: srv, ts: ts, rt: rt, sched: sched, cfg: cfg}
 }
 
 func (l *live) post(t *testing.T, path, body string, hdr map[string]string) *http.Response {
@@ -326,6 +327,111 @@ func TestEmbeddingsSingleString(t *testing.T) {
 	out := readJSON(t, resp)
 	if len(out["data"].([]any)) != 1 {
 		t.Errorf("data = %v", out["data"])
+	}
+}
+
+type embeddingCaptureTransport struct {
+	http.RoundTripper
+	mu     sync.Mutex
+	bodies []map[string]json.RawMessage
+}
+
+func (c *embeddingCaptureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.GetBody == nil {
+		return nil, fmt.Errorf("expected a replayable upstream request")
+	}
+	body, err := r.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	defer body.Close()
+	var fields map[string]json.RawMessage
+	if err := json.NewDecoder(body).Decode(&fields); err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	c.bodies = append(c.bodies, fields)
+	c.mu.Unlock()
+	return c.RoundTripper.RoundTrip(r)
+}
+
+func TestEmbeddingsInputFormsEndToEnd(t *testing.T) {
+	l := newLive(t)
+	capture := &embeddingCaptureTransport{RoundTripper: l.api.proxy.client.Transport}
+	l.api.proxy.client.Transport = capture
+	canonical := func(t *testing.T, raw string) string {
+		t.Helper()
+		var value any
+		if err := json.Unmarshal([]byte(raw), &value); err != nil {
+			t.Fatal(err)
+		}
+		encoded, _ := json.Marshal(value)
+		return string(encoded)
+	}
+	for _, tc := range []struct {
+		name, input string
+		items       int
+		chunks      []string
+	}{
+		{"string", `"hello"`, 1, []string{`"hello"`}},
+		{"single token", `[101]`, 1, []string{`[101]`}},
+		{"tokenized text", `[101,102,103,104,105,106,107,108,109]`, 1, []string{`[101,102,103,104,105,106,107,108,109]`}},
+		{"string batch", `["a","b","c","d","e","f","g","h","i"]`, 9,
+			[]string{`["a","b","c","d"]`, `["e","f","g","h"]`, `["i"]`}},
+		{"tokenized batch", `[[101,102,103,104,105],[201],[301],[401],[501],[601],[701],[801],[901]]`, 9,
+			[]string{`[[101,102,103,104,105],[201],[301],[401]]`, `[[501],[601],[701],[801]]`, `[[901]]`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			capture.mu.Lock()
+			capture.bodies = nil
+			capture.mu.Unlock()
+			resp := l.post(t, "/v1/embeddings", `{"model":"embed","encoding_format":"float","input":`+tc.input+`}`, nil)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status %d: %s", resp.StatusCode, errCode(t, resp))
+			}
+			out := readJSON(t, resp)
+			data := out["data"].([]any)
+			if len(data) != tc.items {
+				t.Errorf("got %d embeddings, want %d", len(data), tc.items)
+			}
+			for i, raw := range data {
+				item := raw.(map[string]any)
+				if item["index"].(float64) != float64(i) {
+					t.Errorf("item %d index=%v", i, item["index"])
+				}
+				if marker := item["embedding"].([]any)[7].(float64); marker != float64(i%4) {
+					t.Errorf("item %d has chunk-local marker %v", i, marker)
+				}
+			}
+			if usage := out["usage"].(map[string]any); usage["prompt_tokens"].(float64) != float64(tc.items*8) {
+				t.Errorf("usage=%v", usage)
+			}
+			capture.mu.Lock()
+			bodies := capture.bodies
+			capture.mu.Unlock()
+			if len(bodies) != len(tc.chunks) {
+				t.Errorf("upstream requests=%d, want %d", len(bodies), len(tc.chunks))
+			}
+			want := map[string]int{}
+			for _, chunk := range tc.chunks {
+				want[canonical(t, chunk)]++
+			}
+			for _, body := range bodies {
+				if string(body["encoding_format"]) != `"float"` {
+					t.Errorf("encoding_format changed: %s", body["encoding_format"])
+				}
+				chunk := canonical(t, string(body["input"]))
+				if want[chunk] == 0 {
+					t.Errorf("unexpected upstream input: %s", chunk)
+				}
+				want[chunk]--
+			}
+			for chunk, missing := range want {
+				if missing > 0 {
+					t.Errorf("input did not reach upstream: %s", chunk)
+				}
+			}
+		})
 	}
 }
 

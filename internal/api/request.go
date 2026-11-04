@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,7 +56,8 @@ type inferenceRequest struct {
 	// rewritten to the resolved id (for a family, at grant time).
 	// Re-marshalled per step.
 	body map[string]json.RawMessage
-	// input holds the embeddings input array when it is an array.
+	// input holds batch items (strings or token arrays). A flat token array
+	// is one input and stays in body so it is forwarded intact.
 	input []json.RawMessage
 	steps int
 }
@@ -193,7 +195,7 @@ func parseInferenceRequest(r *http.Request, kind job.Kind, cfg *config.Config, m
 		_ = json.Unmarshal(rawStream, &req.stream)
 	}
 
-	// embeddings: chunk large inputs
+	// Embeddings: chunk batches, never the tokens of a single input.
 	if kind == job.Embedding {
 		rawInput, ok := body["input"]
 		if !ok {
@@ -204,13 +206,34 @@ func parseInferenceRequest(r *http.Request, kind job.Kind, cfg *config.Config, m
 			if len(arr) == 0 {
 				return nil, badRequest("input_empty", "input must not be empty")
 			}
-			req.input = arr
-			if n, size := len(arr), cfg.Policy.EmbeddingChunkSize; n > size {
-				req.steps = (n + size - 1) / size
+			if isEmbeddingBatch(arr) {
+				req.input = arr
+				if n, size := len(arr), cfg.Policy.EmbeddingChunkSize; n > size {
+					req.steps = (n + size - 1) / size
+				}
 			}
 		}
 	}
 	return req, nil
+}
+
+// isEmbeddingBatch recognises homogeneous batches of strings or token arrays.
+// Flat token arrays and unsupported shapes are passed through as one request;
+// the runtime retains responsibility for validating the contents.
+func isEmbeddingBatch(input []json.RawMessage) bool {
+	if len(input) == 0 {
+		return false
+	}
+	kind := bytes.TrimSpace(input[0])[0]
+	if kind != '"' && kind != '[' {
+		return false
+	}
+	for _, item := range input {
+		if bytes.TrimSpace(item)[0] != kind {
+			return false
+		}
+	}
+	return true
 }
 
 // contentParts returns the part types used in a chat request's message
