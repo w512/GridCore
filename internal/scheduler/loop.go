@@ -586,8 +586,8 @@ func (s *Scheduler) profileKey(sp *model.Spec) string {
 
 // migrateProfiles carries measurements from a binary path/mtime/size identity
 // to the runtime's reported build id. Both keys use the current profile schema
-// and include runtime defaults. Older schemas that omitted those defaults are
-// deliberately not migrated: the launch settings used to measure them are unknown.
+// and preserve runtime defaults and model argv. Older schemas that omitted
+// defaults or sorted argv are not migrated: their launch settings are unknown.
 func (s *Scheduler) migrateProfiles() {
 	for _, id := range sortedSpecIDs(s.specs) {
 		sp := s.specs[id]

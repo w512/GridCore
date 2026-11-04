@@ -40,12 +40,8 @@ models:
 	}
 }
 
-func TestProfileKeyIgnoresArgOrderButNotValues(t *testing.T) {
+func TestProfileKeyTracksSettings(t *testing.T) {
 	a := &Spec{RuntimeType: "llamacpp", Path: "/m", Ctx: 4096, Parallel: 1, Args: []string{"--a", "--b"}}
-	b := &Spec{RuntimeType: "llamacpp", Path: "/m", Ctx: 4096, Parallel: 1, Args: []string{"--b", "--a"}}
-	if a.ProfileKey("bin", "gpu") != b.ProfileKey("bin", "gpu") {
-		t.Error("arg order should not change the key")
-	}
 	c := &Spec{RuntimeType: "llamacpp", Path: "/m", Ctx: 8192, Parallel: 1, Args: []string{"--a", "--b"}}
 	if a.ProfileKey("bin", "gpu") == c.ProfileKey("bin", "gpu") {
 		t.Error("ctx must change the key")
@@ -55,6 +51,45 @@ func TestProfileKeyIgnoresArgOrderButNotValues(t *testing.T) {
 	}
 	if a.ProfileKey("bin", "gpu") == a.ProfileKey("bin", "gpu2") {
 		t.Error("gpu must change the key")
+	}
+}
+
+func TestProfileKeyPreservesModelArgOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		before, after []string
+		same          bool
+	}{
+		{"flag values swapped", []string{"-ngl", "0", "--n-cpu-moe", "4"}, []string{"-ngl", "4", "--n-cpu-moe", "0"}, false},
+		{"repeated flag order", []string{"-ngl", "0", "-ngl", "999"}, []string{"-ngl", "999", "-ngl", "0"}, false},
+		{"equals flag order", []string{"--n-gpu-layers=0", "--n-gpu-layers=999"}, []string{"--n-gpu-layers=999", "--n-gpu-layers=0"}, false},
+		{"exact argv order", []string{"--jinja", "--no-webui"}, []string{"--no-webui", "--jinja"}, false},
+		{"unchanged args", []string{"-ngl", "4"}, []string{"-ngl", "4"}, true},
+		{"nil and empty args", nil, []string{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &Spec{RuntimeType: "llamacpp", Path: "/m.gguf", Ctx: 4096, Parallel: 1, Args: tc.before}
+			b := *a
+			b.Args = tc.after
+			before, after := slices.Clone(a.Args), slices.Clone(b.Args)
+			if same := a.ProfileKey("build", "GPU") == b.ProfileKey("build", "GPU"); same != tc.same {
+				t.Errorf("same key = %v, want %v", same, tc.same)
+			}
+			if !slices.Equal(a.Args, before) || !slices.Equal(b.Args, after) {
+				t.Error("computing a profile key changed the launch arguments")
+			}
+		})
+	}
+}
+
+func TestProfileKeyRejectsSortedArgSchema(t *testing.T) {
+	// This v2 key also matched the reversed argv, which left every layer
+	// on the CPU. Even an already sorted argv cannot safely reuse it.
+	const oldKey = "1e9e1af8b57be1a1"
+	sp := &Spec{RuntimeType: "llamacpp", Path: "/m.gguf", Ctx: 4096, Parallel: 1,
+		Args: []string{"--n-gpu-layers=0", "--n-gpu-layers=999"}}
+	if sp.ProfileKey("build", "GPU") == oldKey {
+		t.Error("profile with lost argument ordering can still be reused")
 	}
 }
 

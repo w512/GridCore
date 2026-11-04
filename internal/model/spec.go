@@ -9,7 +9,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -86,23 +85,21 @@ func (s *Spec) HasCapability(cap string) bool {
 // ProfileKey identifies the (variant, runtime build, gpu) tuple a Profile
 // belongs to. runtimeID names the runtime build (scheduler.RuntimeID) so
 // that a different llama.cpp starts with fresh measurements; gpuName is the
-// device name reported by the monitor. Runtime defaults are ordered argv:
-// sorting them would lose flag/value associations and override precedence.
+// device name reported by the monitor. Runtime defaults and model arguments
+// retain their exact argv order, including flag/value pairs and overrides.
 func (s *Spec) ProfileKey(runtimeID, gpuName string) string {
-	args := append([]string(nil), s.Args...)
-	sort.Strings(args)
 	path := s.Path
 	if path == "" { // simulated models have no file; identify them by id
 		path = "id:" + s.ID
 	}
 	parts := []string{
-		// Older profiles did not record runtime defaults, so their safety
-		// cannot be established even when today's defaults are empty.
-		"profile-v2",
+		// Older schemas omitted runtime defaults or sorted model arguments;
+		// their launch settings cannot be reconstructed safely.
+		"profile-v3",
 		s.RuntimeType, path, s.MMProj,
 		fmt.Sprint(s.Ctx), fmt.Sprint(s.Parallel),
 		strings.Join(s.DefaultArgs, "\x00"),
-		strings.Join(args, "\x00"),
+		strings.Join(s.Args, "\x00"),
 		runtimeID, gpuName,
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x01")))

@@ -4,11 +4,12 @@
 
 ### Fixed
 
-- Memory profile keys include runtime `default_args`, preserving their order.
-  Changing or removing the defaults invalidates the old measurement in the
-  scheduler, `bench` and `profiles`. Profiles from the previous key schema are
-  no longer reused or migrated because they did not record those arguments;
-  measurements are collected again on load or with `gridcore bench`.
+- Memory profile keys preserve the order of runtime `default_args` and model
+  `args`, including flag/value associations and repeated flag precedence.
+  Changing either invalidates measurements in the scheduler, `bench` and
+  `profiles`. Older key schemas omitted defaults or sorted model arguments,
+  so their profiles are no longer reused or migrated; measurements are
+  collected again on load or with `gridcore bench`.
 
 ## 0.4.0 — 2026-10-25
 

@@ -71,7 +71,7 @@ gpu: { device: simulation, poll_interval: 10ms }
 runtimes:
   sim: { type: simulation, port_range: [44900, 44949], default_args: ["-ngl", "0"] }
 models:
-  chat: { runtime: sim, capabilities: [chat], simulated_vram_mb: 9000 }
+  chat: { runtime: sim, capabilities: [chat], simulated_vram_mb: 9000, args: ["--jinja"] }
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -155,6 +155,57 @@ models:
 			}
 			if _, ok := store.Get(s.profileKey(s.specs["chat"])); ok {
 				t.Error("outdated profile became current during migration")
+			}
+		})
+	}
+}
+
+func TestAdmissionRejectsOutdatedModelArgs(t *testing.T) {
+	for _, source := range []string{"build", "binary", "v2_build", "v2_binary"} {
+		t.Run(source, func(t *testing.T) {
+			cfg, err := config.Parse([]byte(`
+gpu: {device: simulation}
+runtimes:
+  sim: {type: simulation}
+models:
+  chat: {runtime: sim, capabilities: [chat], simulated_vram_mb: 1000, args: ["--n-gpu-layers=999", "--n-gpu-layers=0"]}
+`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sp := model.FromConfig(cfg)["chat"]
+			key := sp.ProfileKey("build", "Simulated GPU")
+			switch source {
+			case "binary":
+				key = sp.ProfileKey("simulation", "Simulated GPU")
+			case "v2_build":
+				key = "08817084fd1fb00c" // v2 sorted argv with build identity
+			case "v2_binary":
+				key = "2acf273c56b2201c" // v2 sorted argv with binary identity
+			}
+			store, _ := model.OpenStore("")
+			if err := store.Update(key, "chat", func(p *model.Profile) { p.ObserveVRAM(100) }); err != nil {
+				t.Fatal(err)
+			}
+			m := cfg.Models["chat"]
+			m.Args = []string{"--n-gpu-layers=0", "--n-gpu-layers=999"}
+			cfg.Models["chat"] = m
+			mon := gpusim.New("Simulated GPU", 16000)
+			rt := versionedSim{rtsim.New("sim", mon), "build"}
+			s, err := New(cfg, map[string]runtime.Runtime{"sim": rt}, mon, store, nil,
+				Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.cancelLoads()
+			if err := s.snapshotSync(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if need := s.needMB(s.specs["chat"]); need != 1000+cfg.GPU.HeadroomMB {
+				t.Errorf("admission reused a measurement for different argument order: need %d MB", need)
+			}
+			if _, ok := store.Get(s.profileKey(s.specs["chat"])); ok {
+				t.Error("profile with lost argument ordering became current during migration")
 			}
 		})
 	}
