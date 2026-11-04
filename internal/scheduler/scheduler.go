@@ -31,7 +31,7 @@ type Options struct {
 	Now              func() time.Time
 	BreakerThreshold int           // failures within BreakerWindow that disable a model; default 3
 	BreakerWindow    time.Duration // default 5m
-	ShutdownTimeout  time.Duration // wait for in-flight steps on shutdown; default 30s
+	ShutdownTimeout  time.Duration // drain steps and clean up instances on shutdown; default 30s
 	Logger           *slog.Logger
 	// ProcessName returns the executable name of a PID on the GPU;
 	// default procname.Name.
@@ -72,6 +72,11 @@ type Scheduler struct {
 
 	events  chan event
 	stopped chan struct{}
+
+	// Loads share a lifetime separate from running inference: shutdown
+	// cancels loads immediately while allowing granted steps to drain.
+	loadCtx     context.Context
+	cancelLoads context.CancelFunc
 
 	// ---- loop-owned state below; never touch from other goroutines ----
 	q         *queue
@@ -200,6 +205,7 @@ func New(cfg *config.Config, runtimes map[string]runtime.Runtime, mon gpu.Monito
 		s.binaryIDs[name] = RuntimeID(rc, runtimes[name])
 		s.log.Info("runtime", "name", name, "id", s.binaryIDs[name])
 	}
+	s.loadCtx, s.cancelLoads = context.WithCancel(context.Background())
 	return s, nil
 }
 
@@ -533,12 +539,13 @@ func (s *Scheduler) logPreload(sp *model.Spec, status string, err error) {
 // shutdown fails queued jobs, waits for in-flight steps, stops instances.
 func (s *Scheduler) shutdown() {
 	s.shuttingDown = true
+	s.cancelLoads()
 	s.event(EvShutdown, "scheduler", "draining")
 	for _, js := range s.q.all() {
 		s.fail(js, ErrShuttingDown, "shutdown")
 	}
-	deadline := time.NewTimer(s.opts.ShutdownTimeout)
-	defer deadline.Stop()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.opts.ShutdownTimeout)
+	defer cancel()
 
 	inflight := func() int {
 		n := 0
@@ -551,42 +558,34 @@ func (s *Scheduler) shutdown() {
 		select {
 		case ev := <-s.events:
 			s.handle(ev)
-		case <-deadline.C:
+		case <-shutdownCtx.Done():
 			s.log.Warn("shutdown: giving up on in-flight steps", "inflight", inflight())
 			goto stop
 		}
 	}
 stop:
-	pending := 0
 	for _, e := range s.res.All() {
 		if e.Instance != nil && e.State != residency.Stopping {
 			// Past the drain deadline nothing is coming back; stop anyway
 			// rather than leak the process to the next start's reaper.
 			e.Running = 0
 			s.stopEntry(e, "shutdown")
-			pending++
-		} else if e.State == residency.Stopping {
-			pending++
 		}
 	}
-	for pending > 0 {
+	// Loading entries count too: Load must finish its cancellation cleanup
+	// or hand back an instance that we can stop before shutdown completes.
+	for s.res.Len() > 0 {
 		select {
 		case ev := <-s.events:
-			if st, ok := ev.(evStopped); ok {
-				s.handle(st)
-				pending--
-			} else if _, ok := ev.(evLoaded); ok {
-				// a load finishing during shutdown: stop it too
-				s.handle(ev)
-				if e, ok := s.res.Get(ev.(evLoaded).id); ok && e.Instance != nil {
+			s.handle(ev)
+			if loaded, ok := ev.(evLoaded); ok {
+				// Readiness can win the race with load cancellation.
+				if e, ok := s.res.Get(loaded.id); ok && e.Instance != nil {
 					s.stopEntry(e, "shutdown")
-					pending++
 				}
-			} else {
-				s.handle(ev)
 			}
-		case <-deadline.C:
-			s.log.Warn("shutdown: instances still stopping", "pending", pending)
+		case <-shutdownCtx.Done():
+			s.log.Warn("shutdown: instances still loading or stopping", "pending", s.res.Len())
 			return
 		}
 	}

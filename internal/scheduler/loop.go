@@ -263,6 +263,11 @@ func (s *Scheduler) onLoaded(e evLoaded) {
 	if e.err != nil {
 		s.res.Remove(e.id)
 		s.ports[ent.Spec.Runtime].release(ent.Port)
+		if s.shuttingDown && errors.Is(e.err, context.Canceled) {
+			// An intentional shutdown is not a load failure or breaker strike.
+			s.updateResidentGauge()
+			return
+		}
 		outcome := "error"
 		if errors.Is(e.err, runtime.ErrLoadTimeout) {
 			outcome = "timeout"
@@ -472,6 +477,9 @@ func (s *Scheduler) onSnapshot(e evSnapshot) {
 // ---- admin ----
 
 func (s *Scheduler) onAdmin(e evAdmin) error {
+	if s.shuttingDown {
+		return ErrShuttingDown
+	}
 	sp := s.specs[e.model]
 	now := s.now()
 	switch e.op {

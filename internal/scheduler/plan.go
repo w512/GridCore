@@ -345,10 +345,23 @@ func (s *Scheduler) startLoad(sp *model.Spec, needMB int, c job.Class, now time.
 
 	timeout := s.cfg.Runtimes[sp.Runtime].LoadTimeout
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		ctx, cancel := context.WithTimeout(s.loadCtx, timeout)
 		defer cancel()
 		inst, err := rt.Load(ctx, sp, port)
-		s.send(evLoaded{id: sp.ID, inst: inst, err: err})
+		if s.send(evLoaded{id: sp.ID, inst: inst, err: err}) {
+			// If shutdown closed stopped while send was enqueuing, the final
+			// drain may already have finished. Keep responsibility for cleanup.
+			select {
+			case <-s.stopped:
+			default:
+				return
+			}
+		}
+		if inst != nil {
+			if err := inst.Stop(context.Background()); err != nil {
+				s.log.Warn("late load stop", "model", sp.ID, "err", err)
+			}
+		}
 	}()
 	return nil
 }
