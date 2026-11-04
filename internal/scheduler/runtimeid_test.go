@@ -63,13 +63,13 @@ type versionedSim struct {
 
 func (r versionedSim) Version() string { return r.v }
 
-// A profile recorded by 0.1 (keyed by binary path/mtime/size) for the binary
-// on disk now is carried over to the build-id key instead of being lost.
-func TestLegacyProfileCarriedOver(t *testing.T) {
+// A profile using the current schema and binary identity can be carried over
+// to the reported build id when all launch settings still match.
+func TestBinaryIdentityProfileCarriedOver(t *testing.T) {
 	cfg, err := config.Parse([]byte(`
 gpu: { device: simulation, poll_interval: 10ms }
 runtimes:
-  sim: { type: simulation, port_range: [44900, 44949] }
+  sim: { type: simulation, port_range: [44900, 44949], default_args: ["-ngl", "0"] }
 models:
   chat: { runtime: sim, capabilities: [chat], simulated_vram_mb: 9000 }
 `))
@@ -106,5 +106,56 @@ models:
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("legacy profile was not carried over to the build-id key")
+	t.Fatal("matching binary profile was not carried over to the build-id key")
+}
+
+func TestAdmissionRejectsOutdatedRuntimeDefaults(t *testing.T) {
+	for _, source := range []string{"build", "binary", "v1_build", "v1_binary"} {
+		t.Run(source, func(t *testing.T) {
+			cfg, err := config.Parse([]byte(`
+gpu: {device: simulation}
+runtimes:
+  sim: {type: simulation, default_args: ["-ngl", "0"]}
+models:
+  chat: {runtime: sim, capabilities: [chat], simulated_vram_mb: 1000}
+`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			sp := model.FromConfig(cfg)["chat"]
+			key := sp.ProfileKey("build", "Simulated GPU")
+			switch source {
+			case "binary":
+				key = sp.ProfileKey("simulation", "Simulated GPU")
+			case "v1_build":
+				key = "90d07b2f9f2be3c1" // v1 key with build identity, no default_args
+			case "v1_binary":
+				key = "203addaf824e7114" // v1 key with binary identity, no default_args
+			}
+			store, _ := model.OpenStore("")
+			if err := store.Update(key, "chat", func(p *model.Profile) { p.ObserveVRAM(100) }); err != nil {
+				t.Fatal(err)
+			}
+			rc := cfg.Runtimes["sim"]
+			rc.DefaultArgs = nil // removing CPU offload must invalidate the measurement
+			cfg.Runtimes["sim"] = rc
+			mon := gpusim.New("Simulated GPU", 16000)
+			rt := versionedSim{rtsim.New("sim", mon), "build"}
+			s, err := New(cfg, map[string]runtime.Runtime{"sim": rt}, mon, store, nil,
+				Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.cancelLoads()
+			if err := s.snapshotSync(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if need := s.needMB(s.specs["chat"]); need != 1000+cfg.GPU.HeadroomMB {
+				t.Errorf("admission reused outdated measurement: need %d MB", need)
+			}
+			if _, ok := store.Get(s.profileKey(s.specs["chat"])); ok {
+				t.Error("outdated profile became current during migration")
+			}
+		})
+	}
 }

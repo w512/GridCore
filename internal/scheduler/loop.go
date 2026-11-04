@@ -584,10 +584,10 @@ func (s *Scheduler) profileKey(sp *model.Spec) string {
 	return sp.ProfileKey(s.binaryIDs[sp.Runtime], s.gpuName)
 }
 
-// migrateProfiles carries measurements over from the 0.1 key, which named
-// the runtime by its binary's path, mtime and size. A profile found under
-// that key was recorded with exactly the binary on disk now, so it is as
-// good as one recorded under the build id.
+// migrateProfiles carries measurements from a binary path/mtime/size identity
+// to the runtime's reported build id. Both keys use the current profile schema
+// and include runtime defaults. Older schemas that omitted those defaults are
+// deliberately not migrated: the launch settings used to measure them are unknown.
 func (s *Scheduler) migrateProfiles() {
 	for _, id := range sortedSpecIDs(s.specs) {
 		sp := s.specs[id]

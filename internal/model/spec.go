@@ -30,6 +30,10 @@ type Spec struct {
 	Args         []string
 	Aliases      []string
 
+	// DefaultArgs are the runtime's arguments applied before Args. The
+	// adapter applies them; keep a copy here for profile identity.
+	DefaultArgs []string
+
 	Pinned  bool
 	Preload bool
 
@@ -57,6 +61,7 @@ func FromConfig(cfg *config.Config) map[string]*Spec {
 			Ctx:             m.Ctx,
 			Parallel:        m.Parallel,
 			Args:            append([]string(nil), m.Args...),
+			DefaultArgs:     append([]string(nil), cfg.Runtimes[m.Runtime].DefaultArgs...),
 			Aliases:         append([]string(nil), m.Aliases...),
 			Pinned:          m.Pinned,
 			Preload:         m.Preload,
@@ -81,7 +86,8 @@ func (s *Spec) HasCapability(cap string) bool {
 // ProfileKey identifies the (variant, runtime build, gpu) tuple a Profile
 // belongs to. runtimeID names the runtime build (scheduler.RuntimeID) so
 // that a different llama.cpp starts with fresh measurements; gpuName is the
-// device name reported by the monitor.
+// device name reported by the monitor. Runtime defaults are ordered argv:
+// sorting them would lose flag/value associations and override precedence.
 func (s *Spec) ProfileKey(runtimeID, gpuName string) string {
 	args := append([]string(nil), s.Args...)
 	sort.Strings(args)
@@ -90,8 +96,12 @@ func (s *Spec) ProfileKey(runtimeID, gpuName string) string {
 		path = "id:" + s.ID
 	}
 	parts := []string{
+		// Older profiles did not record runtime defaults, so their safety
+		// cannot be established even when today's defaults are empty.
+		"profile-v2",
 		s.RuntimeType, path, s.MMProj,
 		fmt.Sprint(s.Ctx), fmt.Sprint(s.Parallel),
+		strings.Join(s.DefaultArgs, "\x00"),
 		strings.Join(args, "\x00"),
 		runtimeID, gpuName,
 	}

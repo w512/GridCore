@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Memory profile keys include runtime `default_args`, preserving their order.
+  Changing or removing the defaults invalidates the old measurement in the
+  scheduler, `bench` and `profiles`. Profiles from the previous key schema are
+  no longer reused or migrated because they did not record those arguments;
+  measurements are collected again on load or with `gridcore bench`.
+
 ## 0.4.0 — 2026-10-25
 
 AMD GPUs: GridCore schedules on a card driven by the amdgpu kernel driver,

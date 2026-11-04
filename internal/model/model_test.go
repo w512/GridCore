@@ -2,6 +2,7 @@ package model
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 func TestFromConfig(t *testing.T) {
 	cfg, err := config.Parse([]byte(`
 runtimes:
-  llamacpp: {binary: /x}
+  llamacpp: {binary: /x, default_args: ["-ngl", "999"]}
   sim: {type: simulation}
 models:
   chat: {runtime: llamacpp, path: /m.gguf, capabilities: [chat, vision], ctx: 8192, parallel: 2, args: ["--jinja"], aliases: [gpt-4o]}
@@ -24,6 +25,14 @@ models:
 	c := specs["chat"]
 	if c.RuntimeType != config.RuntimeLlamaCpp || c.Ctx != 8192 || c.Parallel != 2 || !c.HasCapability("vision") {
 		t.Errorf("chat spec = %+v", c)
+	}
+	if !slices.Equal(c.DefaultArgs, []string{"-ngl", "999"}) || !slices.Equal(c.Args, []string{"--jinja"}) {
+		t.Fatalf("runtime defaults and model args were not kept separately: %+v", c)
+	}
+	// Config edits must not change an already materialised profile identity.
+	cfg.Runtimes["llamacpp"].DefaultArgs[1] = "0"
+	if c.DefaultArgs[1] != "999" {
+		t.Error("spec aliases the config's runtime defaults")
 	}
 	s := specs["sim1"]
 	if s.RuntimeType != config.RuntimeSimulation || !s.Pinned || !s.Preload || s.EstimateVRAMMB() != 700 {
@@ -54,6 +63,54 @@ func TestProfileKeySimulatedModelsDiffer(t *testing.T) {
 	b := &Spec{ID: "b", RuntimeType: "simulation", Ctx: 4096, Parallel: 1}
 	if a.ProfileKey("simulation", "gpu") == b.ProfileKey("simulation", "gpu") {
 		t.Error("simulated models without a path must not share a profile")
+	}
+}
+
+func TestProfileKeyTracksRuntimeDefaultArgs(t *testing.T) {
+	cfg, err := config.Parse([]byte(`
+runtimes:
+  llamacpp: {binary: /llama-server}
+models:
+  chat: {runtime: llamacpp, path: /m.gguf, capabilities: [chat], args: ["--jinja"]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := func(args []string) string {
+		rc := cfg.Runtimes["llamacpp"]
+		rc.DefaultArgs = args
+		cfg.Runtimes["llamacpp"] = rc
+		return FromConfig(cfg)["chat"].ProfileKey("build", "GPU")
+	}
+	for _, tc := range []struct {
+		name          string
+		before, after []string
+		same          bool
+	}{
+		{"offload changed", []string{"-ngl", "0"}, []string{"-ngl", "999"}, false},
+		{"defaults added", nil, []string{"-ngl", "0"}, false},
+		{"defaults removed", []string{"-ngl", "0"}, nil, false},
+		{"cache changed", []string{"-ctk", "q8_0"}, []string{"-ctk", "f16"}, false},
+		{"flag values swapped", []string{"-ngl", "0", "--n-cpu-moe", "4"}, []string{"-ngl", "4", "--n-cpu-moe", "0"}, false},
+		{"repeated flag order", []string{"-ngl", "0", "-ngl", "999"}, []string{"-ngl", "999", "-ngl", "0"}, false},
+		{"unchanged defaults", []string{"-ngl", "999"}, []string{"-ngl", "999"}, true},
+		{"nil and empty defaults", nil, []string{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if same := key(tc.before) == key(tc.after); same != tc.same {
+				t.Errorf("same key = %v, want %v", same, tc.same)
+			}
+		})
+	}
+}
+
+func TestProfileKeyRejectsOldSchemaWithoutDefaults(t *testing.T) {
+	// The v1 key for this spec did not record runtime default_args. It
+	// could have been measured with CPU offload, even if defaults are now empty.
+	const oldKey = "6f62eff4ec1f2889"
+	sp := &Spec{RuntimeType: "llamacpp", Path: "/m.gguf", Ctx: 4096, Parallel: 1, Args: []string{"--jinja"}}
+	if sp.ProfileKey("build", "GPU") == oldKey {
+		t.Error("profile without recorded runtime defaults can still be reused")
 	}
 }
 
