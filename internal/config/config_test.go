@@ -66,6 +66,47 @@ func TestParseAppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestPollInterval(t *testing.T) {
+	for _, tc := range []struct {
+		name, src string
+		want      time.Duration
+		invalid   bool
+	}{
+		{"unset", "", 500 * time.Millisecond, false},
+		{"zero uses default", "gpu: {poll_interval: 0s}", 500 * time.Millisecond, false},
+		{"positive", "gpu: {poll_interval: 250ms}", 250 * time.Millisecond, false},
+		{"smallest positive", "gpu: {poll_interval: 1ns}", time.Nanosecond, false},
+		{"negative second", "gpu: {poll_interval: -1s}", 0, true},
+		{"negative nanosecond", "gpu: {poll_interval: -1ns}", 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tc.src))
+			if tc.invalid {
+				if err == nil || !strings.Contains(err.Error(), "gpu.poll_interval must be > 0") {
+					t.Fatalf("want poll_interval validation error, got config=%+v err=%v", cfg, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.GPU.PollInterval != tc.want {
+				t.Errorf("poll_interval=%s, want %s", cfg.GPU.PollInterval, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsNonPositivePollInterval(t *testing.T) {
+	for _, interval := range []time.Duration{0, -time.Nanosecond, -time.Second} {
+		cfg := Default()
+		cfg.GPU.PollInterval = interval
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "gpu.poll_interval must be > 0") {
+			t.Errorf("poll_interval=%s: want validation error, got %v", interval, err)
+		}
+	}
+}
+
 func TestStarvationZeroDisables(t *testing.T) {
 	c, err := Parse([]byte("policy:\n  background_max_starvation: 0s\n"))
 	if err != nil {

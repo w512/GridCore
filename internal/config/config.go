@@ -370,6 +370,9 @@ func (c *Config) Validate() error {
 	if c.GPU.HeadroomMB < 0 {
 		add("gpu.headroom_mb must be >= 0")
 	}
+	if c.GPU.PollInterval <= 0 {
+		add("gpu.poll_interval must be > 0")
+	}
 	if c.GPU.VRAMLimitMB != nil && *c.GPU.VRAMLimitMB <= 0 {
 		add("gpu.vram_limit_mb must be > 0 when set")
 	}

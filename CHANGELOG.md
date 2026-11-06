@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Negative `gpu.poll_interval` values are rejected during config validation
+  instead of panicking the scheduler. Unset and `0s` still use the 500 ms default.
 - Tokenized embeddings input (`input: [token, ...]`) is forwarded intact as
   one request. Only batches of strings or token arrays are chunked; the
   simulation runtime also returns one embedding for a flat token array.
