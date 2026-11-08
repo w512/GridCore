@@ -262,7 +262,7 @@ func (s *Scheduler) onLoaded(e evLoaded) {
 	dur := now.Sub(ent.LoadStarted)
 	if e.err != nil {
 		s.res.Remove(e.id)
-		s.ports[ent.Spec.Runtime].release(ent.Port)
+		s.ports.Release(ent.Port)
 		if s.shuttingDown && errors.Is(e.err, context.Canceled) {
 			// An intentional shutdown is not a load failure or breaker strike.
 			s.updateResidentGauge()
@@ -329,7 +329,7 @@ func (s *Scheduler) onDied(e evDied) {
 		return // expected exit (we stopped it) or already replaced
 	}
 	s.res.Remove(e.id)
-	s.ports[ent.Spec.Runtime].release(ent.Port)
+	s.ports.Release(ent.Port)
 	s.externalSettle = externalSettleSnapshots
 	s.m.InstanceCrashes.WithLabelValues(e.id).Inc()
 	detail := "process exited"
@@ -358,7 +358,7 @@ func (s *Scheduler) onStopped(e evStopped) {
 		return
 	}
 	s.res.Remove(e.id)
-	s.ports[ent.Spec.Runtime].release(ent.Port)
+	s.ports.Release(ent.Port)
 	s.externalSettle = externalSettleSnapshots
 	s.m.ModelEvictions.WithLabelValues(e.id, e.reason).Inc()
 	s.event(EvUnloaded, e.id, e.reason)
@@ -384,10 +384,12 @@ func (s *Scheduler) stopEntry(ent *residency.Entry, reason string) {
 	ent.State = residency.Stopping
 	inst := ent.Instance
 	id := ent.ID
+	reservation := s.ports.Get(ent.Port)
 	go func() {
 		if err := inst.Stop(context.Background()); err != nil {
 			s.log.Warn("instance stop", "model", id, "err", err)
 		}
+		reservation.Release()
 		s.send(evStopped{id: id, inst: inst, reason: reason})
 	}()
 }

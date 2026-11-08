@@ -324,10 +324,11 @@ func (s *Scheduler) startLoad(sp *model.Spec, needMB int, c job.Class, now time.
 	if !ok {
 		return fmt.Errorf("no runtime %q", sp.Runtime)
 	}
-	port, err := s.ports[sp.Runtime].alloc()
+	reservation, err := s.ports.Reserve(s.cfg.Runtimes[sp.Runtime].PortRange)
 	if err != nil {
 		return err
 	}
+	port := reservation.Port
 	ent := &residency.Entry{
 		ID:          sp.ID,
 		Spec:        sp,
@@ -362,6 +363,7 @@ func (s *Scheduler) startLoad(sp *model.Spec, needMB int, c job.Class, now time.
 				s.log.Warn("late load stop", "model", sp.ID, "err", err)
 			}
 		}
+		reservation.Release()
 	}()
 	return nil
 }

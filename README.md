@@ -130,6 +130,13 @@ gridcore bench --all                          # loads each model once, records V
 gridcore serve
 ```
 
+Runtime `port_range` values may overlap. GridCore reserves ports across all
+runtimes and, for processes running as the same user, across the daemon and
+`bench`. Reservations use file locks in `/tmp/gridcore-ports-<uid>` and are
+released after the instance stops or a failed load finishes cleanup. An
+unrelated program that does not use these locks can still race a server's
+TCP bind; stop the daemon before benchmarking for accurate GPU measurements.
+
 Then, from any OpenAI client:
 
 ```bash

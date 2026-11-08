@@ -20,6 +20,7 @@ import (
 	"github.com/w512/gridcore/internal/job"
 	"github.com/w512/gridcore/internal/metrics"
 	"github.com/w512/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/portalloc"
 	"github.com/w512/gridcore/internal/procname"
 	"github.com/w512/gridcore/internal/residency"
 	"github.com/w512/gridcore/internal/runtime"
@@ -82,7 +83,7 @@ type Scheduler struct {
 	q         *queue
 	res       *residency.Set
 	jobs      map[string]*jobState
-	ports     map[string]*portAllocator
+	ports     *portalloc.Allocator
 	binaryIDs map[string]string
 	breakers  map[string]*breaker
 	disabled  map[string]string // model id -> reason
@@ -175,7 +176,7 @@ func New(cfg *config.Config, runtimes map[string]runtime.Runtime, mon gpu.Monito
 		stopped:   make(chan struct{}),
 		q:         newQueue(),
 		jobs:      map[string]*jobState{},
-		ports:     map[string]*portAllocator{},
+		ports:     portalloc.New(),
 		binaryIDs: map[string]string{},
 		breakers:  map[string]*breaker{},
 		disabled:  map[string]string{},
@@ -201,7 +202,6 @@ func New(cfg *config.Config, runtimes map[string]runtime.Runtime, mon gpu.Monito
 		if _, ok := runtimes[name]; !ok {
 			return nil, fmt.Errorf("scheduler: no runtime implementation for %q", name)
 		}
-		s.ports[name] = newPortAllocator(rc.PortRange[0], rc.PortRange[1])
 		s.binaryIDs[name] = RuntimeID(rc, runtimes[name])
 		s.log.Info("runtime", "name", name, "id", s.binaryIDs[name])
 	}
@@ -381,8 +381,17 @@ func (s *Scheduler) drainAfterStop() {
 			case evAdmin:
 				e.reply <- ErrShuttingDown
 			case evLoaded:
+				var reservation *portalloc.Reservation
+				if ent, ok := s.res.Get(e.id); ok {
+					reservation = s.ports.Get(ent.Port)
+				}
 				if e.inst != nil {
-					go func() { _ = e.inst.Stop(context.Background()) }()
+					go func() {
+						_ = e.inst.Stop(context.Background())
+						reservation.Release()
+					}()
+				} else {
+					reservation.Release()
 				}
 			}
 		default:

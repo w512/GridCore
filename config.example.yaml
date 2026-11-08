@@ -30,6 +30,7 @@ runtimes:
   llamacpp:
     # scripts/install-llamacpp.sh installs a prebuilt CUDA release here.
     binary: /opt/llama.cpp/current/llama-server
+    # Ranges may overlap: ports are reserved across runtimes and bench.
     port_range: [41000, 41999]
     load_timeout: 180s
     default_args: ["--flash-attn", "on"]

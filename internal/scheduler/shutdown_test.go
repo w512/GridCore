@@ -14,6 +14,7 @@ import (
 	gpusim "github.com/w512/gridcore/internal/gpu/simulation"
 	"github.com/w512/gridcore/internal/job"
 	"github.com/w512/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/portalloc"
 	"github.com/w512/gridcore/internal/runtime"
 	rtsim "github.com/w512/gridcore/internal/runtime/simulation"
 )
@@ -114,7 +115,7 @@ func TestShutdownCancelsLoadsAndWaitsForCleanup(t *testing.T) {
 	case <-time.After(wait):
 		t.Fatal("shutdown did not finish after load cleanup")
 	}
-	if s.res.Len() != 0 || len(s.ports["sim"].inUse) != 0 {
+	if s.res.Len() != 0 || s.ports.Len() != 0 {
 		t.Error("cancelled loads left residency entries or reserved ports")
 	}
 	if len(s.breakers) != 0 {
@@ -132,6 +133,7 @@ func TestShutdownStopsLateLoadResult(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			started := make(chan context.Context, 1)
+			ports := make(chan int, 1)
 			result := make(chan runtime.Instance, 1)
 			loadReturned := make(chan struct{})
 			release := make(chan struct{})
@@ -141,6 +143,7 @@ func TestShutdownStopsLateLoadResult(t *testing.T) {
 			rt.load = func(ctx context.Context, sp *model.Spec, port int) (runtime.Instance, error) {
 				defer close(loadReturned)
 				started <- ctx
+				ports <- port
 				<-release
 				// Readiness can race cancellation; deliberately return a live
 				// instance even though the load context was cancelled.
@@ -158,6 +161,9 @@ func TestShutdownStopsLateLoadResult(t *testing.T) {
 			case <-time.After(wait):
 				t.Fatal("load did not start")
 			}
+			port := <-ports
+			other := portalloc.New()
+			rng := [2]int{port, port}
 			// Also reap the test instance if the regression leaves it alive.
 			t.Cleanup(func() {
 				releaseLoad()
@@ -179,6 +185,10 @@ func TestShutdownStopsLateLoadResult(t *testing.T) {
 				}
 				if !errors.Is(loadCtx.Err(), context.Canceled) {
 					t.Errorf("load context after shutdown: %v", loadCtx.Err())
+				}
+				if reservation, err := other.Reserve(rng); err == nil {
+					other.Release(reservation.Port)
+					t.Error("shutdown released the port while a load could still bind it")
 				}
 			} else {
 				select {
@@ -219,6 +229,17 @@ func TestShutdownStopsLateLoadResult(t *testing.T) {
 				default:
 					t.Error("Run returned before stopping the loaded instance")
 				}
+			}
+			deadline := time.Now().Add(wait)
+			for {
+				if reservation, err := other.Reserve(rng); err == nil {
+					other.Release(reservation.Port)
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("late load cleanup left its port reserved")
+				}
+				time.Sleep(time.Millisecond)
 			}
 		})
 	}

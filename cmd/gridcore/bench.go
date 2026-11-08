@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -17,6 +16,7 @@ import (
 	"github.com/w512/gridcore/internal/config"
 	"github.com/w512/gridcore/internal/gpu"
 	"github.com/w512/gridcore/internal/model"
+	"github.com/w512/gridcore/internal/portalloc"
 	"github.com/w512/gridcore/internal/runtime"
 	"github.com/w512/gridcore/internal/scheduler"
 )
@@ -132,13 +132,15 @@ func cmdBench(args []string) error {
 
 func benchOne(ctx context.Context, cfg *config.Config, rt runtime.Runtime, mon gpu.Monitor, sp *model.Spec, promptTok, genTok int) benchResult {
 	res := benchResult{Model: sp.ID, EstMB: sp.EstimateVRAMMB()}
-	port, err := pickFreePort(cfg.Runtimes[sp.Runtime].PortRange)
+	ports := portalloc.New()
+	reservation, err := ports.Reserve(cfg.Runtimes[sp.Runtime].PortRange)
 	if err != nil {
 		res.Err = err
 		return res
 	}
+	defer ports.Release(reservation.Port)
 	start := time.Now()
-	inst, err := rt.Load(ctx, sp, port)
+	inst, err := rt.Load(ctx, sp, reservation.Port)
 	if err != nil {
 		res.Err = fmt.Errorf("load: %w", err)
 		return res
@@ -280,19 +282,4 @@ func truncate(b []byte) string {
 		return s[:300] + "..."
 	}
 	return s
-}
-
-func pickFreePort(rng [2]int) (int, error) {
-	for p := rng[0]; p <= rng[1]; p++ {
-		ln, err := listenTCP(p)
-		if err == nil {
-			ln.Close()
-			return p, nil
-		}
-	}
-	return 0, fmt.Errorf("no free port in %d-%d", rng[0], rng[1])
-}
-
-func listenTCP(port int) (net.Listener, error) {
-	return net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 }
