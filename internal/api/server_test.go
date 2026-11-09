@@ -251,6 +251,24 @@ func TestChatNonStreaming(t *testing.T) {
 	}
 }
 
+func TestSameOriginBrowserInference(t *testing.T) {
+	l := newLive(t)
+	resp := l.post(t, "/v1/chat/completions", `{"model":"chat","messages":[],"stream":true}`, map[string]string{
+		"Origin":         l.ts.URL,
+		"Sec-Fetch-Site": "same-origin",
+		"Content-Type":   "application/json; charset=utf-8",
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("same-origin inference: status=%d body=%s", resp.StatusCode, raw)
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil || !strings.Contains(string(raw), "[DONE]") {
+		t.Fatalf("stream did not finish: err=%v body=%s", err, raw)
+	}
+}
+
 func TestChatStreaming(t *testing.T) {
 	l := newLive(t)
 	resp := l.post(t, "/v1/chat/completions", `{"model":"chat","stream":true,"messages":[]}`, nil)
@@ -494,6 +512,7 @@ func TestClientDisconnectCancelsJob(t *testing.T) {
 	l := newLive(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, l.ts.URL+"/v1/chat/completions", strings.NewReader(`{"model":"slow","messages":[]}`))
+	req.Header.Set("Content-Type", "application/json")
 	errCh := make(chan error, 1)
 	go func() {
 		_, err := http.DefaultClient.Do(req)

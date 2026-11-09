@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -65,6 +66,11 @@ type inferenceRequest struct {
 // parseInferenceRequest reads and validates the body. Class precedence:
 // header, body "gridcore" object, "model@class" suffix, policy default.
 func parseInferenceRequest(r *http.Request, kind job.Kind, cfg *config.Config, maxBody int64) (*inferenceRequest, *apiError) {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return nil, &apiError{status: http.StatusUnsupportedMediaType, typ: "invalid_request_error", code: "unsupported_media_type",
+			msg: "Content-Type must be application/json"}
+	}
 	raw, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, maxBody))
 	if err != nil {
 		var tooBig *http.MaxBytesError

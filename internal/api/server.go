@@ -28,12 +28,13 @@ type Scheduler interface {
 
 // Server wires handlers.
 type Server struct {
-	cfg     *config.Config
-	metrics *metrics.Metrics
-	sched   Scheduler
-	version string
-	mux     *http.ServeMux
-	proxy   *proxy
+	cfg          *config.Config
+	metrics      *metrics.Metrics
+	sched        Scheduler
+	version      string
+	mux          *http.ServeMux
+	proxy        *proxy
+	allowedHosts map[string]bool
 
 	// MaxBodyBytes bounds request bodies (vision requests carry base64
 	// images). Default 32 MB.
@@ -50,6 +51,7 @@ func New(cfg *config.Config, m *metrics.Metrics, sched Scheduler, version string
 		version:      version,
 		mux:          http.NewServeMux(),
 		proxy:        newProxy(),
+		allowedHosts: allowedHosts(cfg.Server),
 		MaxBodyBytes: 32 << 20,
 	}
 	s.routes()
@@ -71,11 +73,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/embeddings", s.inference(job.Embedding))
 }
 
-// Handler returns the root handler with common response headers applied.
+// Handler returns the root handler with browser protections and response headers.
 func (s *Server) Handler() http.Handler {
+	protected := s.protectBrowserRequests(s.mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Server", "gridcore/"+s.version)
-		s.mux.ServeHTTP(w, r)
+		protected.ServeHTTP(w, r)
 	})
 }
 

@@ -66,6 +66,33 @@ func TestParseAppliesDefaults(t *testing.T) {
 	}
 }
 
+func TestServerAllowedHosts(t *testing.T) {
+	cfg, err := Parse([]byte(minimal + `
+server:
+  listen: 0.0.0.0:8080
+  allowed_hosts: [gridcore.example.com, 192.168.1.5, 'fd00::5']
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Server.AllowedHosts) != 3 || cfg.Server.AllowedHosts[0] != "gridcore.example.com" {
+		t.Fatalf("allowed_hosts = %v", cfg.Server.AllowedHosts)
+	}
+	for _, host := range []string{
+		"", "*", "*.example.com", "https://gridcore.example.com", "gridcore.example.com:8080", "[::1]",
+		"0.0.0.0", "::", "::ffff:0.0.0.0", "fe80::1%en0", "example.com/path", "user@example.com",
+		" example.com", "example.com\n", ".example.com", "example..com", "-example.com", "example-.com",
+	} {
+		t.Run(host, func(t *testing.T) {
+			cfg := Default()
+			cfg.Server.AllowedHosts = []string{host}
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "server.allowed_hosts") {
+				t.Fatalf("allowed host %q: want validation error, got %v", host, err)
+			}
+		})
+	}
+}
+
 func TestPollInterval(t *testing.T) {
 	for _, tc := range []struct {
 		name, src string

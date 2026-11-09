@@ -140,7 +140,7 @@ TCP bind; stop the daemon before benchmarking for accurate GPU measurements.
 Then, from any OpenAI client:
 
 ```bash
-curl localhost:8080/v1/chat/completions -d '{
+curl localhost:8080/v1/chat/completions -H 'Content-Type: application/json' -d '{
   "model": "gpt-4o",
   "messages": [{"role": "user", "content": "hello"}]
 }'
@@ -487,6 +487,19 @@ HTTP: `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`,
 `/v1/models`, `/health`, `/metrics`, `/admin/state`, `/admin/ui` (the
 dashboard; `/` redirects there), `POST /admin/models/{id}/{load,unload,enable}`.
 There is no authentication yet: keep `server.listen` on `127.0.0.1`.
+Browser requests that change state must be same-origin. Inference POSTs
+require `Content-Type: application/json` (an optional `charset` is accepted).
+CLI clients do not need to send `Origin` or browser headers.
+
+To prevent DNS rebinding, every endpoint checks the HTTP `Host` against
+loopback addresses, `localhost`, the concrete `server.listen` hostname/IP,
+and any extra names in `server.allowed_hosts` (for example,
+`allowed_hosts: [gridcore.example.com]` behind a reverse proxy). Entries are
+exact hostnames or IPs without ports or wildcards. Listening on `0.0.0.0`,
+`[::]`, or `:8080` does not allow arbitrary hosts: add the actual names/IPs
+clients use to `allowed_hosts`. Forwarded host headers are not trusted.
+These browser protections do not authenticate clients or make a public
+listener safe; put authentication in front of any non-local deployment.
 
 Run it as a service with [`deploy/gridcore.service`](deploy/gridcore.service)
 on Linux (`systemctl --user enable --now gridcore`) or

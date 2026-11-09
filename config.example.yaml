@@ -11,6 +11,9 @@
 
 server:
   listen: 127.0.0.1:8080
+  # Extra HTTP Host names/IPs, without ports, for a reverse proxy or LAN.
+  # Loopback and the concrete listen host are always allowed; no wildcards.
+  allowed_hosts: []
 
 gpu:
   # auto | nvidia:<index> | amdgpu:<index> | apple | simulation

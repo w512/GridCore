@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -57,6 +58,9 @@ type Config struct {
 
 type Server struct {
 	Listen string `yaml:"listen"`
+	// AllowedHosts adds HTTP hostnames/IPs (without ports) to loopback and
+	// the concrete listen host. Wildcard listen addresses add no hosts.
+	AllowedHosts []string `yaml:"allowed_hosts"`
 }
 
 type GPU struct {
@@ -367,6 +371,12 @@ func (c *Config) Validate() error {
 	var errs []error
 	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
 
+	for _, host := range c.Server.AllowedHosts {
+		if !validServerHost(host) {
+			add("server.allowed_hosts %q: want a hostname or IP without a scheme, port or wildcard", host)
+		}
+	}
+
 	if c.GPU.HeadroomMB < 0 {
 		add("gpu.headroom_mb must be >= 0")
 	}
@@ -625,6 +635,27 @@ func (g GPU) Unified() bool { return unifiedDevice(g.Device) }
 
 func unifiedDevice(device string) bool {
 	return device == "apple" || device == "auto" && runtime.GOOS == "darwin"
+}
+
+func validServerHost(host string) bool {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		return ip.Zone() == "" && !ip.Unmap().IsUnspecified()
+	}
+	host = strings.TrimSuffix(host, ".")
+	if len(host) == 0 || len(host) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, ch := range label {
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func validDevice(d string) bool {

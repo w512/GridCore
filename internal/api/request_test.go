@@ -35,6 +35,7 @@ policy:
 func parse(t *testing.T, cfg *config.Config, kind job.Kind, body string, hdr map[string]string) (*inferenceRequest, *apiError) {
 	t.Helper()
 	r := httptest.NewRequest(http.MethodPost, "/v1/x", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
 	for k, v := range hdr {
 		r.Header.Set(k, v)
 	}
@@ -218,9 +219,22 @@ func TestParseEmbeddingsInputForms(t *testing.T) {
 func TestParseBodyTooLarge(t *testing.T) {
 	cfg := parseCfg(t)
 	r := httptest.NewRequest(http.MethodPost, "/v1/x", strings.NewReader(`{"model":"chat","messages":"`+strings.Repeat("x", 100)+`"}`))
+	r.Header.Set("Content-Type", "application/json")
 	_, aerr := parseInferenceRequest(r, job.Chat, cfg, 50)
 	if aerr == nil || aerr.status != http.StatusRequestEntityTooLarge {
 		t.Fatalf("want 413, got %+v", aerr)
+	}
+}
+
+func TestParseJSONMediaType(t *testing.T) {
+	cfg := parseCfg(t)
+	for _, contentType := range []string{"application/json", "application/json; charset=utf-8", `application/json; charset="UTF-8"`, "Application/JSON"} {
+		t.Run(contentType, func(t *testing.T) {
+			_, aerr := parse(t, cfg, job.Chat, `{"model":"chat"}`, map[string]string{"Content-Type": contentType})
+			if aerr != nil {
+				t.Fatal(aerr)
+			}
+		})
 	}
 }
 
