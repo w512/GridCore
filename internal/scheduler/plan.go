@@ -21,7 +21,6 @@ func (s *Scheduler) schedule() {
 		return
 	}
 	now := s.now()
-	s.retryPreloads(now)
 
 	// Interactive jobs are always considered, each independently: one waiting
 	// for a load must not block another whose model is resident.
@@ -32,6 +31,7 @@ func (s *Scheduler) schedule() {
 
 	interactive := s.interactiveMode(now)
 	s.setMode(interactive, now)
+	s.retryPreloads(now)
 	if interactive {
 		// Bounded starvation: once lower-class jobs have waited too long, let
 		// a single step through even though interactive work is active. Its
@@ -462,20 +462,24 @@ func (s *Scheduler) reservedMB() int {
 // swings by hundreds of MB): it makes a request wait, not fail as "can
 // never fit".
 func (s *Scheduler) maxLoadableMB(sp *model.Spec) int {
-	mx := s.budgetMB() - s.externalMB
-	if s.snap.MemoryKind == gpu.Unified {
-		mx = s.budgetMB()
+	mx := s.capacityMB(sp)
+	if s.snap.MemoryKind != gpu.Unified {
+		mx -= s.externalMB
 	}
+	return max(0, mx)
+}
+
+// capacityMB excludes transient external usage, so preload retries can
+// distinguish a temporarily busy device from a model that cannot fit it.
+func (s *Scheduler) capacityMB(sp *model.Spec) int {
+	mx := s.budgetMB()
 	for id, other := range s.specs {
 		if id == sp.ID || !other.Pinned {
 			continue
 		}
 		mx -= s.needMB(other)
 	}
-	if mx < 0 {
-		return 0
-	}
-	return mx
+	return max(0, mx)
 }
 
 // needMB is the admission size for sp: the stored measurement when we have

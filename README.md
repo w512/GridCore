@@ -345,7 +345,7 @@ models:
     runtime: llamacpp
     path: ~/models/nomic-embed-text-v1.5.f16.gguf
     capabilities: [embedding]
-    pinned: true            # preload, never evict
+    pinned: true            # preload, restore after crashes, protect from eviction
 
 policy:
   classes:
@@ -361,6 +361,16 @@ policy:
 
 `gridcore models --explain` shows the VRAM estimate per model and where it
 comes from. See [`config.example.yaml`](config.example.yaml) for every knob.
+
+`preload: true` keeps trying startup loading until the model is ready,
+including after GPU monitoring recovers or another app releases memory.
+Once loaded, an ordinary preload can be evicted or unloaded without being
+automatically restored. `pinned: true` also restores crashed instances.
+Automatic retries wait 5 seconds after a load failure or crash, respect
+memory pressure and interactive work, and stop while the circuit breaker
+has disabled the model. `POST /admin/models/{id}/enable` resumes a pending
+preload or pinned recovery. Waiting states are logged only when they change;
+models that cannot fit the device/configuration stop retrying.
 
 ## What it looks like
 

@@ -1016,6 +1016,14 @@ func (m *flakyMonitor) Snapshot(ctx context.Context) (gpu.Snapshot, error) {
 }
 
 func TestStartupRetriesFlakyGPU(t *testing.T) {
+	for _, failures := range []int32{2, 3} {
+		t.Run(fmt.Sprint(failures), func(t *testing.T) {
+			testStartupRetriesFlakyGPU(t, failures)
+		})
+	}
+}
+
+func testStartupRetriesFlakyGPU(t *testing.T, failures int32) {
 	cfg, err := config.Parse([]byte(`
 gpu: { device: simulation, headroom_mb: 512, poll_interval: 10ms }
 runtimes:
@@ -1028,7 +1036,7 @@ models:
 	}
 	sim := gpusim.New("Simulated GPU", 16000)
 	mon := &flakyMonitor{inner: sim}
-	mon.remain.Store(2) // first two snapshots fail, third succeeds
+	mon.remain.Store(failures) // three failures exhaust startup retries; polling must recover
 	rt := rtsim.New("sim", sim)
 	s, err := New(cfg, map[string]runtime.Runtime{"sim": rt}, mon, nil, nil, Options{
 		Tick: 5 * time.Millisecond, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -1046,8 +1054,8 @@ models:
 		st := s.State()
 		for _, r := range st.Resident {
 			if r.ID == "embed" && r.State == "ready" {
-				if mon.failures.Load() < 2 {
-					t.Errorf("expected the monitor to have failed twice, got %d", mon.failures.Load())
+				if mon.failures.Load() != failures {
+					t.Errorf("expected %d monitor failures, got %d", failures, mon.failures.Load())
 				}
 				return
 			}

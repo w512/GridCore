@@ -296,11 +296,13 @@ func (s *Scheduler) onLoaded(e evLoaded) {
 		// arrivals see the breaker.
 		s.failQueuedFor(e.id, fmt.Errorf("%w: %v", ErrLoadFailed, e.err), "load_error")
 		s.recordFailure(e.id, "load failed: "+e.err.Error())
+		s.retryPreloadAfterFailure(ent.Spec, now)
 		s.updateResidentGauge()
 		return
 	}
 	ent.Instance = e.inst
 	ent.State = residency.Ready
+	delete(s.preloads, e.id)
 	ent.LoadedAt = now
 	if ent.LastUsed.IsZero() {
 		ent.LastUsed = now // never-used models are LRU-ordered by load time
@@ -339,6 +341,7 @@ func (s *Scheduler) onDied(e evDied) {
 	s.event(EvCrash, e.id, detail)
 	s.log.Error("model instance died", "model", e.id, "detail", detail)
 	s.recordFailure(e.id, "crash: "+detail)
+	s.retryPreloadAfterFailure(ent.Spec, s.now())
 	// Steps in flight on this instance will fail on their own; make the
 	// outcome explicit so the API layer can stop waiting for other steps.
 	for _, js := range s.jobs {
@@ -363,6 +366,9 @@ func (s *Scheduler) onStopped(e evStopped) {
 	s.m.ModelEvictions.WithLabelValues(e.id, e.reason).Inc()
 	s.event(EvUnloaded, e.id, e.reason)
 	s.log.Info("model unloaded", "model", e.id, "reason", e.reason)
+	if ent.Spec.Pinned {
+		s.retryPreloadAfterFailure(ent.Spec, s.now())
+	}
 	s.updateResidentGauge()
 }
 
@@ -510,6 +516,11 @@ func (s *Scheduler) onAdmin(e evAdmin) error {
 	case "enable":
 		delete(s.disabled, e.model)
 		delete(s.breakers, e.model)
+		if sp.Pinned || s.preloads[e.model] != nil {
+			p := s.queuePreload(e.model)
+			p.nextAttempt = time.Time{}
+			p.status = ""
+		}
 		s.event(EvEnabled, e.model, "")
 		return nil
 	}

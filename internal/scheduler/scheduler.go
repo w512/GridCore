@@ -122,9 +122,8 @@ type Scheduler struct {
 	// interactive job is freeing memory for its model or waiting for the
 	// load slot; lower classes then start no loads (see loadHold).
 	interactiveLoadPending bool
-	// preloadQueue holds pinned/preload models still waiting for the load
-	// slot (unified memory loads one at a time).
-	preloadQueue []string
+	// preloads tracks startup loads until Ready, plus pinned recovery loads.
+	preloads     map[string]*preloadState
 	mode         string
 	shuttingDown bool
 
@@ -180,6 +179,7 @@ func New(cfg *config.Config, runtimes map[string]runtime.Runtime, mon gpu.Monito
 		binaryIDs: map[string]string{},
 		breakers:  map[string]*breaker{},
 		disabled:  map[string]string{},
+		preloads:  map[string]*preloadState{},
 		ring:      newEventRing(eventBuffer),
 		mode:      "idle",
 		loads:     map[string][]time.Time{},
@@ -498,51 +498,6 @@ func (s *Scheduler) processNames(snap gpu.Snapshot) map[int]string {
 		pids[i] = p.PID
 	}
 	return s.names.Names(pids)
-}
-
-// preload loads pinned models first, then preload-only ones.
-func (s *Scheduler) preload() {
-	now := s.now()
-	for _, pinnedPass := range []bool{true, false} {
-		for _, id := range sortedSpecIDs(s.specs) {
-			sp := s.specs[id]
-			if sp.Pinned != pinnedPass || !sp.Preload {
-				continue
-			}
-			status, err := s.ensureLoaded(sp, job.Background, false, now)
-			if status == "load-queued" || len(s.preloadQueue) > 0 {
-				// Unified memory loads one at a time: the rest of the
-				// preloads follow, in order, as the load slot frees up.
-				s.preloadQueue = append(s.preloadQueue, id)
-				continue
-			}
-			s.logPreload(sp, status, err)
-		}
-	}
-}
-
-// retryPreloads continues the preloads that were waiting for the load slot.
-func (s *Scheduler) retryPreloads(now time.Time) {
-	for len(s.preloadQueue) > 0 {
-		sp := s.specs[s.preloadQueue[0]]
-		status, err := s.ensureLoaded(sp, job.Background, false, now)
-		if status == "load-queued" {
-			return
-		}
-		s.preloadQueue = s.preloadQueue[1:]
-		s.logPreload(sp, status, err)
-	}
-}
-
-func (s *Scheduler) logPreload(sp *model.Spec, status string, err error) {
-	switch {
-	case err != nil && sp.Pinned:
-		s.log.Error("pinned model cannot be loaded; it will never be available", "model", sp.ID, "err", err)
-	case err != nil:
-		s.log.Warn("preload failed", "model", sp.ID, "err", err)
-	default:
-		s.log.Info("preload", "model", sp.ID, "status", status)
-	}
 }
 
 // shutdown fails queued jobs, waits for in-flight steps, stops instances.

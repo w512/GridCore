@@ -109,7 +109,7 @@ func newHarness(t *testing.T, totalMB int, models string) *harness {
 }
 
 // newHarnessWith appends extra lines to the policy section.
-func newHarnessWith(t *testing.T, totalMB int, models, extraPolicy string) *harness {
+func newHarnessWith(t *testing.T, totalMB int, models, extraPolicy string, setup ...func(*gpusim.Monitor, *rtsim.Runtime)) *harness {
 	t.Helper()
 	lo := int(testPortBase.Add(20)) // disjoint from runtimeid_test (44900+), the api package (45000+) and scheduler_test (46000+)
 	src := fmt.Sprintf(baseYAML, lo, lo+19, models)
@@ -123,6 +123,9 @@ func newHarnessWith(t *testing.T, totalMB int, models, extraPolicy string) *harn
 	gpu := gpusim.New("Simulated GPU", totalMB)
 	rt := rtsim.New("sim", gpu)
 	rt.RequestDelay = time.Millisecond
+	for _, configure := range setup {
+		configure(gpu, rt)
+	}
 	clock := &testClock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)}
 
 	names := &fakeNames{names: map[int]string{}, calls: map[int]int{}}

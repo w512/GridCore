@@ -101,9 +101,10 @@ type Model struct {
 	Parallel int      `yaml:"parallel"`
 	Args     []string `yaml:"args"`
 	Aliases  []string `yaml:"aliases"`
-	// Pinned models are preloaded at start and never evicted.
+	// Pinned models are preloaded, restored after crashes, and protected
+	// from normal eviction. Automatic recovery respects the circuit breaker.
 	Pinned bool `yaml:"pinned"`
-	// Preload loads the model at start but leaves it evictable.
+	// Preload retries startup loading until Ready but leaves the model evictable.
 	Preload bool `yaml:"preload"`
 
 	// Simulation knobs (ignored by real runtimes). Let tests and demos
